@@ -33,39 +33,7 @@ import {
 import { FILTERS, ID, STORAGE_KEYS } from './constants.js'
 import { ago, errMsg, extractStreamName, titleCase } from './format.js'
 import { healthMeta } from './health.js'
-
-function usePersisted(ctx, key, fallback) {
-  const [value, setValue] = useState(fallback)
-  const [ready, setReady] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      try {
-        const v = await ctx.storage.get(key)
-        if (!cancelled && v != null && v !== '') setValue(v)
-      } catch {
-        /* ignore */
-      } finally {
-        if (!cancelled) setReady(true)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [ctx, key])
-
-  const set = (next) => {
-    setValue(next)
-    try {
-      void ctx.storage.set(key, next)
-    } catch {
-      /* ignore */
-    }
-  }
-
-  return [value, set, ready]
-}
+import { usePersisted } from './persist.js'
 
 export function WorkstreamPage({ ctx }) {
   const cwd = useValue(host.state.cwd)
@@ -661,7 +629,7 @@ function StreamDetail({
             jsx(DetailCard, {
               title: 'Open PRs',
               children: pulse?.prs?.length
-                ? jsx(PrList, { prs: pulse.prs, limit: 12 })
+                ? jsx(PrList, { prs: pulse.prs, limit: 12, repo: detail.repo })
                 : jsx(Muted, { children: 'None listed' }),
             }),
 

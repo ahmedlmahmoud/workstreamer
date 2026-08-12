@@ -27,6 +27,7 @@ const ORDER = [
   'constants.js',
   'health.js',
   'format.js',
+  'persist.js',
   'atoms.js',
   'chip.js',
   'map.js',
@@ -78,7 +79,7 @@ const header = `/**
  * Source of truth: desktop/src/*.js
  * Rebuild: node desktop/assemble.mjs
  *
- * Modules: constants, health, format, atoms, chip, map, entry
+ * Modules: constants, health, format, persist, atoms, chip, map, entry
  *
  * Deploy (Mac):
  *   mkdir -p ~/.hermes/desktop-plugins/workstreamer

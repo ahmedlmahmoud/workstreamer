@@ -11,4 +11,5 @@ export const FILTERS = [
 export const STORAGE_KEYS = {
   filter: 'map.filter',
   selected: 'map.selected',
+  pinned: 'chip.pinned',
 }

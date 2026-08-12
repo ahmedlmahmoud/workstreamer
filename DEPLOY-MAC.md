@@ -104,12 +104,13 @@ If you use a named profile, copy into **that profile’s** `$HERMES_HOME/desktop
 
 If a stale **right rail** is still visible after reload, close that tab or restart Desktop once — the pane is no longer registered (v0.2.2+).
 
-## Expect after both halves
+## Expect after both halves (v0.3.0)
 
-- Chip: live health / focus / down  
-- Popover: milestones, URLs, blockers, **parsed PRs** (`#29 SEO`) — not raw markdown  
+- Chip: title + milestone ticks + pin marker  
+- Popover: Next (copy), switcher, clickable URL pills, PRs open `{discovered-repo}/pull/N`  
 - Sidebar **Workstreams** → full page (left list + right detail), no always-on rail  
 - No right-area pane stealing space  
+- No hardcoded GitHub table — repo comes from `repo/` git remote or AGENTS.md  
 
 ## Do not
 
@@ -117,3 +118,4 @@ If a stale **right rail** is still visible after reload, close that tab or resta
 - Name the Python helper package `lib/` — another plugin already owns that  
 - Long-term hand-edit assembled `plugin.js` — edit `desktop/src/*`, assemble, copy  
 - Write into profile secrets / `auth.json` / `.env`  
+- Hardcode stream remotes in `constants.js` — discover from git / AGENTS.md  

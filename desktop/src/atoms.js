@@ -5,10 +5,11 @@ import {
   StatusDot,
   Tip,
   cn,
+  haptic,
 } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
-import { parsePr } from './format.js'
-import { badgeVariantForTone, healthMeta, toneOf } from './health.js'
+import { hrefForUrl, openHref, parsePr } from './format.js'
+import { healthMeta, toneOf } from './health.js'
 
 export function Muted({ children, className }) {
   return jsx('span', {
@@ -82,25 +83,39 @@ export function UrlPills({ urls }) {
   if (!urls?.length) return null
   return jsx('div', {
     className: 'flex gap-1 flex-wrap',
-    children: urls.map(u =>
-      jsx(Tip, {
-        key: u.name,
-        label: String(u.status || u.name),
-        children: jsxs('div', {
-          className: 'flex items-center gap-1 px-1.5 py-0.5 rounded-[3px] text-[10px]',
-          style: {
-            background: 'var(--ui-stroke-secondary, var(--muted))',
-            color: toneOf(u.tone) === 'bad'
-              ? 'var(--destructive)'
-              : 'var(--ui-text-secondary, var(--muted-foreground))',
-          },
-          children: [
-            jsx(StatusDot, { tone: toneOf(u.tone) }),
-            u.name,
-          ],
-        }),
+    children: urls.map(u => {
+      const href = hrefForUrl(u.name)
+      const tone = toneOf(u.tone)
+      const body = jsxs(href ? 'button' : 'div', {
+        type: href ? 'button' : undefined,
+        className: cn(
+          'flex items-center gap-1 px-1.5 py-0.5 rounded-[3px] text-[10px]',
+          href && 'hover:opacity-80 cursor-pointer'
+        ),
+        style: {
+          background: 'var(--ui-stroke-secondary, var(--muted))',
+          color: tone === 'bad'
+            ? 'var(--destructive)'
+            : 'var(--ui-text-secondary, var(--muted-foreground))',
+        },
+        onClick: href
+          ? (e) => {
+              e.stopPropagation()
+              haptic('tap')
+              openHref(href)
+            }
+          : undefined,
+        children: [
+          jsx(StatusDot, { tone }),
+          u.name,
+        ],
       })
-    ),
+      return jsx(Tip, {
+        key: u.name,
+        label: href ? `${u.status || u.name} · open` : String(u.status || u.name),
+        children: body,
+      })
+    }),
   })
 }
 
@@ -186,21 +201,30 @@ export function BlockerList({ blockers }) {
   })
 }
 
-export function PrList({ prs, compact = false, limit = 6 }) {
+export function PrList({ prs, compact = false, limit = 6, repo }) {
   if (!prs?.length) return null
-  const items = prs.slice(0, limit).map(parsePr)
+  const items = prs.slice(0, limit).map(raw => parsePr(raw, repo))
   return jsx('div', {
     className: 'flex flex-col',
-    children: items.map((pr, i) =>
-      jsxs('div', {
+    children: items.map((pr, i) => {
+      const row = jsxs(pr.url ? 'button' : 'div', {
+        type: pr.url ? 'button' : undefined,
         key: `${pr.number || pr.title}-${i}`,
         className: cn(
-          'flex items-start gap-2 text-xs',
+          'flex items-start gap-2 text-xs text-left w-full',
           compact ? 'py-0.5' : 'py-1.5',
-          i > 0 && !compact ? 'border-t' : ''
+          i > 0 && !compact ? 'border-t' : '',
+          pr.url && 'hover:opacity-80 cursor-pointer'
         ),
         style: i > 0 && !compact
           ? { borderColor: 'var(--ui-stroke-secondary, var(--border))' }
+          : undefined,
+        onClick: pr.url
+          ? (e) => {
+              e.stopPropagation()
+              haptic('tap')
+              openHref(pr.url)
+            }
           : undefined,
         children: [
           pr.number
@@ -226,7 +250,10 @@ export function PrList({ prs, compact = false, limit = 6 }) {
           }),
         ],
       })
-    ),
+      return pr.url
+        ? jsx(Tip, { key: `${pr.number || pr.title}-${i}`, label: 'Open PR', children: row })
+        : row
+    }),
   })
 }
 

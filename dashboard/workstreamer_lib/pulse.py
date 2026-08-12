@@ -42,6 +42,13 @@ def _parse_updated(raw: str) -> tuple[str, int | None, bool]:
     return display, epoch, stale
 
 
+def _section_matches(key: str, parts: tuple[str, ...]) -> bool:
+    """Match heading tokens. Skip internal keys so ``pr`` never hits ``_pre``."""
+    if not key or key.startswith("_"):
+        return False
+    return any(p in key for p in parts)
+
+
 def parse_status_live(text: str, *, mtime: float | None = None) -> dict[str, Any]:
     lines = text.splitlines()
     title = next((ln.lstrip("# ").strip() for ln in lines if ln.startswith("# ")), "")
@@ -72,7 +79,7 @@ def parse_status_live(text: str, *, mtime: float | None = None) -> dict[str, Any
     def table_rows(section_key_parts: tuple[str, ...]) -> list[list[str]]:
         body: list[str] = []
         for key, val in sections.items():
-            if any(p in key for p in section_key_parts):
+            if _section_matches(key, section_key_parts):
                 body = val
                 break
         rows: list[list[str]] = []
@@ -126,7 +133,7 @@ def parse_status_live(text: str, *, mtime: float | None = None) -> dict[str, Any
     def bullets(section_parts: tuple[str, ...]) -> list[str]:
         body: list[str] = []
         for key, val in sections.items():
-            if any(p in key for p in section_parts):
+            if _section_matches(key, section_parts):
                 body = val
                 break
         out: list[str] = []
@@ -141,7 +148,7 @@ def parse_status_live(text: str, *, mtime: float | None = None) -> dict[str, Any
                     out.append(s)
         return out
 
-    prs = bullets(("pr", "open pr"))
+    prs = bullets(("open pr", "prs", "pull request"))
     blockers = bullets(("blocker",))
 
     focus = None

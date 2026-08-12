@@ -9,7 +9,7 @@ from typing import Any
 from .check_runner import run_check
 from .constants import CORE_FILES, DISPLAY_NAMES, WORKSTREAMS_ROOT
 from .pulse import read_pulse
-from .text import display_name, extract_profile, milestone_short_id
+from .text import discover_repo, display_name, extract_profile, milestone_short_id
 
 
 def core_presence(stream_dir: Path) -> dict[str, Any]:
@@ -53,6 +53,7 @@ def stream_snapshot(
     adopted = agents.exists() and index.exists() and core["has_checker"]
     name = d.name
     title = display_name(name, DISPLAY_NAMES)
+    repo = discover_repo(d)
 
     pulse = read_pulse(status_live) if include_pulse else None
     check = run_check(name, force=force_check) if run_check_flag else None
@@ -85,7 +86,6 @@ def stream_snapshot(
     elif pulse and pulse.get("next_action"):
         focus_label = pulse["next_action"][:40]
 
-    # Severity rank for sorting (issues first)
     severity = {
         "dirty": 0,
         "degraded": 1,
@@ -101,6 +101,7 @@ def stream_snapshot(
         "name": name,
         "title": title,
         "path": str(d),
+        "repo": repo,
         "has_guide": agents.exists(),
         "has_index": index.exists(),
         "has_checker": core["has_checker"],
@@ -135,7 +136,6 @@ def list_streams(*, check: bool = False, pulse: bool = True, force_check: bool =
         if d.is_dir() and not d.name.startswith(".")
     ]
 
-    # Sort: issues first, then alpha
     streams_sorted = sorted(streams, key=lambda s: (s.get("severity", 9), s.get("name", "")))
 
     return {
@@ -168,10 +168,9 @@ def resolve_stream(*, cwd: str | None = None, profile: str | None = None, stream
     if stream:
         d = WORKSTREAMS_ROOT / stream
         if d.is_dir():
-            return {"stream": stream, "source": "explicit", "path": str(d)}
+            return {"stream": stream, "source": "explicit", "path": str(d), "repo": discover_repo(d)}
         return {"stream": None, "source": "explicit", "error": f"unknown stream: {stream}"}
 
-    # Profile: scan AGENTS.md for matching profile
     if profile:
         for d in sorted(WORKSTREAMS_ROOT.iterdir()) if WORKSTREAMS_ROOT.is_dir() else []:
             if not d.is_dir() or d.name.startswith("."):
@@ -184,15 +183,26 @@ def resolve_stream(*, cwd: str | None = None, profile: str | None = None, stream
             except OSError:
                 continue
             if p == profile or d.name == profile:
-                return {"stream": d.name, "source": "profile", "path": str(d), "profile": profile}
+                return {
+                    "stream": d.name,
+                    "source": "profile",
+                    "path": str(d),
+                    "profile": profile,
+                    "repo": discover_repo(d),
+                }
 
-    # Cwd path
     if cwd:
         m = re.search(r"workstreams/([^/]+)", cwd)
         if m:
             name = m.group(1)
             d = WORKSTREAMS_ROOT / name
             if d.is_dir():
-                return {"stream": name, "source": "cwd", "path": str(d), "cwd": cwd}
+                return {
+                    "stream": name,
+                    "source": "cwd",
+                    "path": str(d),
+                    "cwd": cwd,
+                    "repo": discover_repo(d),
+                }
 
     return {"stream": None, "source": "none", "cwd": cwd, "profile": profile}

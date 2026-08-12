@@ -15,8 +15,8 @@ Maintain [dabbo-state](https://github.com/ahmedlmahmoud/dabbo-state) workstream 
 | **`/ws pulse`** | Reads `scope/STATUS-LIVE.md` |
 | **`/ws adopt <name>`** | Scaffolds a stream from **templates only** |
 | **`/ws truth`** | Light STATUS-LIVE vs live URL checks |
-| **Desktop chip** | Current stream health · focus · down URLs (from `/stream`) |
-| **Popover** | Compact pulse: next action, milestones, URLs, blockers, parsed PRs |
+| **Desktop chip** | Title + milestone ticks + pin; switcher + copy/open in the popover |
+| **Popover** | Next action, ticks, clickable URLs, blockers, PRs linked via discovered repo |
 | **Workstreams page** | Left sidebar fleet + full-width detail (milestones, URLs, PRs, constitution) |
 | **Skill** | On-demand how-to (`/skill workstreamer`) |
 
@@ -96,9 +96,10 @@ Modular source → single assembled file:
 ```
 desktop/
 ├── src/                    # edit these
-│   ├── constants.js        # filters, storage keys
+│   ├── constants.js        # filters, storage keys (no repo registry)
 │   ├── health.js           # health → StatusDot tone + badge
-│   ├── format.js           # cwd parse, ago, errors, PR parse
+│   ├── format.js           # cwd parse, ago, hrefForUrl, parsePr
+│   ├── persist.js          # ctx.storage hook (pin / filter / selected)
 │   ├── atoms.js            # MilestoneRail, UrlPills, PrList, ProgressBar, …
 │   ├── chip.js             # status bar chip + compact popover
 │   ├── map.js              # Workstreams page (left list + right detail)
@@ -111,8 +112,8 @@ desktop/
 
 | Surface | What |
 |---|---|
-| Status chip | Always-on pulse for the cwd / profile stream |
-| Chip popover | Compact next / milestones / URLs / blockers / parsed PRs |
+| Status chip | Title + milestone ticks + pin; cwd / profile / pin switcher |
+| Chip popover | Next (copy), clickable URLs, blockers, PRs → discovered GitHub |
 | `/workstream-map` page | Master–detail: 16rem left list, full-width cards on the right |
 
 ### StatusDot API
@@ -152,6 +153,15 @@ dashboard/
     └── snapshot.py
 ```
 
+## Repo discovery
+
+GitHub URLs are **not** hardcoded in the plugin. `/stream` (and `/resolve`) attach `repo` from:
+
+1. `git remote get-url origin` in `repo/` then the stream root — only if that directory has its own `.git` (never walk into `dabbo-state`)
+2. First `github.com` URL in `AGENTS.md` / `README.md` / `INFRASTRUCTURE.md`
+
+Tokens and `.git` suffixes are stripped. `#29` in STATUS-LIVE becomes `{repo}/pull/29`. Host cells like `fe.sq` expand to `https://fe.sq.dabbo.net` by pattern.
+
 ---
 
 ## Safety / handoff
@@ -162,4 +172,4 @@ dashboard/
 
 ## Version
 
-**0.2.2** — drop always-on right pane; page is left list + full-width detail; chip PRs parsed (not raw markdown).
+**0.3.0** — chip switcher + pin + milestone ticks; clickable URLs/PRs; repo discovered from git/AGENTS (no `STREAM_REPOS` table).

@@ -5,7 +5,7 @@
  * Source of truth: desktop/src/*.js
  * Rebuild: node desktop/assemble.mjs
  *
- * Modules: constants, health, format, atoms, chip, map, entry
+ * Modules: constants, health, format, persist, atoms, chip, map, entry
  *
  * Deploy (Mac):
  *   mkdir -p ~/.hermes/desktop-plugins/workstreamer
@@ -55,6 +55,7 @@ const FILTERS = [
 const STORAGE_KEYS = {
   filter: 'map.filter',
   selected: 'map.selected',
+  pinned: 'chip.pinned',
 }
 
 
@@ -93,6 +94,7 @@ function badgeVariantForTone(t) {
 
 /* ──── format.js ──── */
 /** @section format */
+
 function extractStreamName(cwd) {
   if (!cwd) return null
   const m = String(cwd).match(/workstreams\/([^/]+)/)
@@ -122,8 +124,6 @@ function errMsg(e) {
     raw = e.message || e.detail || e.error || String(e)
   }
 
-  // Electron wraps FastAPI 404 as:
-  // Error invoking remote method 'hermes:api': Error: 404: {"detail":"No such API endpoint: /api/plugins/workstreamer/list"}
   if (/No such API endpoint/i.test(raw) || (/404/.test(raw) && /workstreamer/.test(raw))) {
     return 'API not mounted on this dashboard. Copy the Python plugin to the SAME Hermes host Desktop is connected to (dashboard/manifest.json + plugins.enabled + restart). plugin.js alone is only the UI.'
   }
@@ -146,17 +146,15 @@ function ago(ts) {
 function stripMd(s) {
   return String(s || '')
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
-    .replace(/[*_`#]/g, (ch, _i, str) => {
-      // keep PR numbers like #29 — only strip heading hashes at start
-      return ch === '#' ? ch : ''
-    })
+    .replace(/[*_`]/g, '')
     .replace(/^\s*[-*•]+\s+/, '')
     .replace(/\s+/g, ' ')
     .trim()
 }
 
-/** Turn a STATUS-LIVE PR bullet into { number, title, extra, url }. */
-function parsePr(raw) {
+/** Turn a STATUS-LIVE PR bullet into { number, title, extra, url }.
+ *  `repo` comes from the snapshot (git remote / AGENTS.md) — never a plugin table. */
+function parsePr(raw, repo) {
   const source = String(raw || '')
   const urlMatch = source.match(/\((https?:\/\/[^)\s]+)\)/)
   const text = stripMd(source)
@@ -168,12 +166,70 @@ function parsePr(raw) {
     rest = paren[1].trim()
     extra = paren[2].trim()
   }
+  const number = numMatch ? numMatch[1] : ''
+  const base = String(repo || '').replace(/\/+$/, '')
   return {
-    number: numMatch ? numMatch[1] : '',
+    number,
     title: rest || text || 'PR',
     extra,
-    url: urlMatch ? urlMatch[1] : '',
+    url: urlMatch ? urlMatch[1] : number && base ? `${base}/pull/${number}` : '',
     raw: text,
+  }
+}
+
+/** Expand a STATUS-LIVE host cell. Pattern, not a registry:
+ *  already-https stays; `fe.sq` / `bk.sq.dabbo.net` → https://… */
+function hrefForUrl(name) {
+  const n = String(name || '').trim()
+  if (!n) return ''
+  if (/^https?:\/\//i.test(n)) return n
+  if (/^[a-z0-9-]+\.[a-z0-9-]+$/i.test(n) && !n.includes('/')) {
+    return `https://${n}.dabbo.net`
+  }
+  if (/^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(n)) return `https://${n}`
+  return ''
+}
+
+async function copyText(text) {
+  const t = String(text || '')
+  if (!t) return false
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(t)
+      return true
+    }
+  } catch {
+    /* fall through */
+  }
+  try {
+    if (typeof host.copy === 'function') {
+      await host.copy(t)
+      return true
+    }
+  } catch {
+    /* ignore */
+  }
+  return false
+}
+
+function openHref(href) {
+  if (!href) return
+  try {
+    if (typeof host.open === 'function') {
+      host.open(href)
+      return
+    }
+    if (typeof host.openExternal === 'function') {
+      host.openExternal(href)
+      return
+    }
+  } catch {
+    /* fall through */
+  }
+  try {
+    window.open(href, '_blank', 'noopener,noreferrer')
+  } catch {
+    /* ignore */
   }
 }
 
@@ -193,6 +249,40 @@ function hostProfile() {
   } catch {
     return ''
   }
+}
+
+
+/* ──── persist.js ──── */
+/** @section persist */
+
+function usePersisted(ctx, key, fallback) {
+  const [value, setValue] = useState(fallback)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const v = await ctx.storage.get(key)
+        if (!cancelled && v != null && v !== '') setValue(v)
+      } catch {
+        /* ignore */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [ctx, key])
+
+  const set = (next) => {
+    setValue(next)
+    try {
+      void ctx.storage.set(key, next)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return [value, set]
 }
 
 
@@ -274,25 +364,39 @@ function UrlPills({ urls }) {
   if (!urls?.length) return null
   return jsx('div', {
     className: 'flex gap-1 flex-wrap',
-    children: urls.map(u =>
-      jsx(Tip, {
-        key: u.name,
-        label: String(u.status || u.name),
-        children: jsxs('div', {
-          className: 'flex items-center gap-1 px-1.5 py-0.5 rounded-[3px] text-[10px]',
-          style: {
-            background: 'var(--ui-stroke-secondary, var(--muted))',
-            color: toneOf(u.tone) === 'bad'
-              ? 'var(--destructive)'
-              : 'var(--ui-text-secondary, var(--muted-foreground))',
-          },
-          children: [
-            jsx(StatusDot, { tone: toneOf(u.tone) }),
-            u.name,
-          ],
-        }),
+    children: urls.map(u => {
+      const href = hrefForUrl(u.name)
+      const tone = toneOf(u.tone)
+      const body = jsxs(href ? 'button' : 'div', {
+        type: href ? 'button' : undefined,
+        className: cn(
+          'flex items-center gap-1 px-1.5 py-0.5 rounded-[3px] text-[10px]',
+          href && 'hover:opacity-80 cursor-pointer'
+        ),
+        style: {
+          background: 'var(--ui-stroke-secondary, var(--muted))',
+          color: tone === 'bad'
+            ? 'var(--destructive)'
+            : 'var(--ui-text-secondary, var(--muted-foreground))',
+        },
+        onClick: href
+          ? (e) => {
+              e.stopPropagation()
+              haptic('tap')
+              openHref(href)
+            }
+          : undefined,
+        children: [
+          jsx(StatusDot, { tone }),
+          u.name,
+        ],
       })
-    ),
+      return jsx(Tip, {
+        key: u.name,
+        label: href ? `${u.status || u.name} · open` : String(u.status || u.name),
+        children: body,
+      })
+    }),
   })
 }
 
@@ -378,21 +482,30 @@ function BlockerList({ blockers }) {
   })
 }
 
-function PrList({ prs, compact = false, limit = 6 }) {
+function PrList({ prs, compact = false, limit = 6, repo }) {
   if (!prs?.length) return null
-  const items = prs.slice(0, limit).map(parsePr)
+  const items = prs.slice(0, limit).map(raw => parsePr(raw, repo))
   return jsx('div', {
     className: 'flex flex-col',
-    children: items.map((pr, i) =>
-      jsxs('div', {
+    children: items.map((pr, i) => {
+      const row = jsxs(pr.url ? 'button' : 'div', {
+        type: pr.url ? 'button' : undefined,
         key: `${pr.number || pr.title}-${i}`,
         className: cn(
-          'flex items-start gap-2 text-xs',
+          'flex items-start gap-2 text-xs text-left w-full',
           compact ? 'py-0.5' : 'py-1.5',
-          i > 0 && !compact ? 'border-t' : ''
+          i > 0 && !compact ? 'border-t' : '',
+          pr.url && 'hover:opacity-80 cursor-pointer'
         ),
         style: i > 0 && !compact
           ? { borderColor: 'var(--ui-stroke-secondary, var(--border))' }
+          : undefined,
+        onClick: pr.url
+          ? (e) => {
+              e.stopPropagation()
+              haptic('tap')
+              openHref(pr.url)
+            }
           : undefined,
         children: [
           pr.number
@@ -418,7 +531,10 @@ function PrList({ prs, compact = false, limit = 6 }) {
           }),
         ],
       })
-    ),
+      return pr.url
+        ? jsx(Tip, { key: `${pr.number || pr.title}-${i}`, label: 'Open PR', children: row })
+        : row
+    }),
   })
 }
 
@@ -537,18 +653,9 @@ function DetailCard({ title, children, className }) {
 
 
 
-function chipLabel(streamName, data, isFetching) {
-  if (!data) return isFetching ? `${streamName} · …` : `${streamName} · …`
-  const hm = healthMeta(data.health)
-  const down = data.down_url_count || 0
-  const viol = data.check?.violation_count || 0
-  if (data.check?.status === 'dirty' && viol) return `${streamName} · ${viol} viol`
-  if (down > 0) return `${streamName} · ${down} down`
-  if (data.stale) return `${streamName} · stale`
-  if (data.focus_label && ['degraded', 'active', 'dirty', 'stale'].includes(data.health)) {
-    return `${streamName} · ${data.focus_label}`
-  }
-  return `${streamName} · ${hm.short}`
+
+function chipTitle(streamName, data) {
+  return data?.title || titleCase(streamName) || streamName
 }
 
 function WorkstreamChip({ ctx }) {
@@ -556,6 +663,8 @@ function WorkstreamChip({ ctx }) {
   const profile = useValue(host.state.profile)
   const streamFromCwd = extractStreamName(cwd)
   const [open, setOpen] = useState(false)
+  const [switching, setSwitching] = useState(false)
+  const [pinned, setPinned] = usePersisted(ctx, STORAGE_KEYS.pinned, '')
   const qc = useQueryClient()
 
   const { data: resolved } = useQuery({
@@ -571,7 +680,16 @@ function WorkstreamChip({ ctx }) {
     retry: 1,
   })
 
-  const streamName = resolved?.stream || streamFromCwd
+  const liveName = resolved?.stream || streamFromCwd || ''
+  const streamName = pinned || liveName
+
+  const { data: fleet } = useQuery({
+    queryKey: [ID, 'list'],
+    queryFn: () => ctx.rest('/list?pulse=true&check=false'),
+    refetchInterval: 60_000,
+    retry: 1,
+    enabled: open,
+  })
 
   const { data, isFetching, isError, error, refetch } = useQuery({
     queryKey: [ID, 'stream', streamName || 'none'],
@@ -588,11 +706,11 @@ function WorkstreamChip({ ctx }) {
 
   if (!streamName) {
     return jsx(Tip, {
-      label: 'No workstream in cwd — open page',
+      label: 'No workstream — open page',
       children: jsxs('button', {
         type: 'button',
         className:
-          'inline-flex h-full items-center gap-1 rounded-none px-1.5 text-[0.6875rem] transition-colors',
+          'inline-flex h-full items-center gap-1 rounded-none px-1.5 text-[0.6875rem] transition-colors hover:bg-(--chrome-action-hover)',
         style: { color: 'var(--ui-text-quaternary)' },
         onClick: () => {
           haptic('tap')
@@ -607,17 +725,21 @@ function WorkstreamChip({ ctx }) {
   }
 
   const hm = healthMeta(data?.health)
-  const label = chipLabel(streamName, data, isFetching)
+  const chips = data?.pulse?.milestone_chips || []
+  const title = chipTitle(streamName, data)
   const tipBits = [
-    data?.title || titleCase(streamName),
+    title,
+    pinned && pinned !== liveName ? `pinned (cwd: ${liveName || '—'})` : null,
     data?.pulse?.next_action ? `Next: ${data.pulse.next_action}` : data?.focus_label,
-    data?.check?.summary_line,
     isError ? `Error: ${errMsg(error)}` : null,
   ].filter(Boolean)
 
   return jsx(Popover, {
     open,
-    onOpenChange: setOpen,
+    onOpenChange: (v) => {
+      setOpen(v)
+      if (!v) setSwitching(false)
+    },
     children: [
       jsx(PopoverTrigger, {
         key: 'trigger',
@@ -625,18 +747,31 @@ function WorkstreamChip({ ctx }) {
           type: 'button',
           title: tipBits.join(' · ') || streamName,
           className: cn(
-            'inline-flex h-full max-w-[240px] items-center gap-1.5 rounded-none px-1.5',
+            'inline-flex h-full max-w-[280px] items-center gap-1.5 rounded-none px-1.5',
             'text-[0.6875rem] tabular-nums transition-colors',
-            'hover:bg-(--chrome-action-hover)'
+            'hover:bg-(--chrome-action-hover)',
+            isFetching && !data && 'opacity-70'
           ),
           style: { color: 'var(--ui-text-secondary, var(--muted-foreground))' },
           children: [
             jsx(StatusDot, { tone: isError ? 'bad' : hm.tone }),
-            jsx('span', { className: 'truncate', children: label }),
-            isFetching
+            jsx('span', { className: 'truncate font-medium', children: title }),
+            chips.length
               ? jsx('span', {
-                  className: 'text-[9px] opacity-60',
-                  children: '…',
+                  className: 'hidden sm:inline-flex items-center gap-0.5 shrink-0',
+                  children: chips.slice(0, 6).map(c =>
+                    jsx(Tip, {
+                      key: c.id,
+                      label: `${c.id}${c.pct != null ? ` ${c.pct}%` : ''}${c.status ? ` — ${c.status}` : ''}`,
+                      children: jsx(StatusDot, { tone: toneOf(c.tone) }),
+                    })
+                  ),
+                })
+              : null,
+            pinned
+              ? jsx('span', {
+                  className: 'text-[9px] opacity-50 shrink-0',
+                  children: '●',
                 })
               : null,
           ],
@@ -644,16 +779,24 @@ function WorkstreamChip({ ctx }) {
       }),
       jsx(PopoverContent, {
         key: 'content',
-        className: 'w-80 p-0',
+        className: 'w-96 max-h-[min(76vh,600px)] overflow-y-auto p-0',
         align: 'end',
         children: jsx(StreamPopover, {
           streamName,
+          liveName,
+          pinned,
+          setPinned,
+          switching,
+          setSwitching,
+          fleet: fleet?.streams || [],
           data,
-          profile,
           isError,
           error,
           isFetching,
-          onClose: () => setOpen(false),
+          onClose: () => {
+            setOpen(false)
+            setSwitching(false)
+          },
           onRefresh: async () => {
             haptic('tap')
             try {
@@ -672,10 +815,68 @@ function WorkstreamChip({ ctx }) {
   })
 }
 
+function Count({ n, label, tone }) {
+  if (!n) return null
+  return jsxs('span', {
+    className: 'inline-flex items-center gap-1 text-[10px] tabular-nums',
+    style: {
+      color:
+        tone === 'bad'
+          ? 'var(--destructive)'
+          : tone === 'warn'
+            ? 'rgb(245 158 11)'
+            : 'var(--ui-text-quaternary)',
+    },
+    children: [
+      jsx('span', { className: 'font-semibold', children: n }),
+      label,
+    ],
+  })
+}
+
+function StreamSwitcher({ fleet, streamName, liveName, onPick }) {
+  if (!fleet.length) {
+    return jsx(Muted, { className: 'px-3.5 py-2', children: 'Loading fleet…' })
+  }
+  return jsx('div', {
+    className: 'max-h-44 overflow-y-auto border-b',
+    style: { borderColor: 'var(--ui-stroke-secondary, var(--border))' },
+    children: fleet.map(s => {
+      const isCur = s.name === streamName
+      const isLive = s.name === liveName
+      const hm = healthMeta(s.health)
+      return jsxs('button', {
+        key: s.name,
+        type: 'button',
+        className: cn(
+          'w-full text-left px-3.5 py-1.5 flex items-center gap-2 text-xs',
+          'hover:bg-accent/10',
+          isCur && 'bg-accent/10'
+        ),
+        onClick: () => {
+          haptic('tap')
+          onPick(s.name)
+        },
+        children: [
+          jsx(StatusDot, { tone: hm.tone }),
+          jsx('span', { className: 'flex-1 truncate font-medium', children: s.title || s.name }),
+          isLive ? jsx(Muted, { children: 'cwd' }) : null,
+          isCur ? jsx(Muted, { children: 'now' }) : null,
+        ],
+      })
+    }),
+  })
+}
+
 function StreamPopover({
   streamName,
+  liveName,
+  pinned,
+  setPinned,
+  switching,
+  setSwitching,
+  fleet,
   data,
-  profile,
   isError,
   error,
   isFetching,
@@ -684,9 +885,16 @@ function StreamPopover({
 }) {
   const pulse = data?.pulse
   const check = data?.check
-  const core = data?.core
   const hm = healthMeta(data?.health)
-  const title = data?.title || titleCase(streamName)
+  const title = chipTitle(streamName, data)
+  const blockers = pulse?.blockers || []
+  const prs = pulse?.prs || []
+  const down = pulse?.down_urls || []
+  const viol = check?.violation_count || 0
+  const dirty = check?.status === 'dirty' || check?.status === 'no_script' || viol > 0
+  const next = pulse?.next_action || data?.focus_label || ''
+  const isPinned = pinned === streamName
+  const repo = data?.repo || ''
 
   if (isError && !data) {
     return jsxs('div', {
@@ -727,120 +935,146 @@ function StreamPopover({
     className: 'flex flex-col',
     children: [
       jsxs('div', {
-        className: 'px-3 pt-3 pb-2 flex flex-col gap-1',
+        className: 'px-3.5 pt-3 pb-2 flex flex-col gap-2',
         children: [
           jsxs('div', {
             className: 'flex items-center justify-between gap-2',
             children: [
-              jsxs('div', {
-                className: 'flex items-center gap-2 min-w-0',
+              jsxs('button', {
+                type: 'button',
+                className: 'flex items-center gap-2 min-w-0 text-left hover:opacity-80',
+                onClick: () => {
+                  haptic('tap')
+                  setSwitching(!switching)
+                },
                 children: [
                   jsx(StatusDot, { tone: hm.tone }),
                   jsx('span', {
                     className: 'font-semibold text-sm truncate',
                     children: title,
                   }),
+                  jsx(Muted, { children: switching ? '▲' : '▼' }),
                 ],
               }),
               jsxs('div', {
                 className: 'flex items-center gap-1 shrink-0',
                 children: [
                   data?.profile
-                    ? jsx(Badge, {
-                        variant: 'muted',
-                        size: 'xs',
-                        children: `@${data.profile}`,
-                      })
+                    ? jsx(Badge, { variant: 'muted', size: 'xs', children: `@${data.profile}` })
                     : null,
                   jsx(HealthBadge, { health: data?.health }),
                 ],
               }),
             ],
           }),
-          pulse?.next_action
+
+          next
             ? jsxs('div', {
-                className: 'text-xs leading-snug',
-                style: { color: 'var(--ui-text-secondary, var(--muted-foreground))' },
+                className: 'rounded-[4px] px-2.5 py-2 flex flex-col gap-1',
+                style: { background: 'var(--ui-stroke-secondary, var(--muted))' },
                 children: [
-                  jsx('span', {
-                    style: { color: 'var(--ui-text-quaternary)' },
-                    children: 'Next · ',
+                  jsxs('div', {
+                    className: 'flex items-center justify-between gap-2',
+                    children: [
+                      jsx(SectionLabel, { children: 'Next' }),
+                      jsx('button', {
+                        type: 'button',
+                        className: 'text-[10px]',
+                        style: { color: 'var(--ui-text-quaternary)' },
+                        onClick: async () => {
+                          haptic('tap')
+                          const ok = await copyText(next)
+                          host.notify({
+                            kind: ok ? 'success' : 'error',
+                            message: ok ? 'Copied next action' : 'Copy failed',
+                          })
+                        },
+                        children: 'Copy',
+                      }),
+                    ],
                   }),
-                  pulse.next_action,
+                  jsx('div', {
+                    className: 'text-xs leading-snug font-medium',
+                    style: { color: 'var(--ui-text-secondary, var(--muted-foreground))' },
+                    children: next,
+                  }),
                 ],
               })
-            : data?.focus_label
-              ? jsx(Muted, { children: `Focus · ${data.focus_label}` })
-              : null,
+            : null,
+
           jsxs('div', {
-            className: 'flex items-center gap-2 flex-wrap',
+            className: 'flex items-center gap-2.5 flex-wrap',
             children: [
+              jsx(Count, { n: blockers.length, label: 'blockers', tone: blockers.length ? 'warn' : null }),
+              jsx(Count, { n: down.length, label: 'down', tone: down.length ? 'bad' : null }),
+              jsx(Count, { n: prs.length, label: 'PRs' }),
               pulse?.updated
                 ? jsx(Muted, {
-                    children: `STATUS-LIVE · ${pulse.updated}${pulse.stale ? ' · STALE' : ''}`,
+                    children: pulse.stale ? `${pulse.updated} · stale` : pulse.updated,
                   })
-                : null,
-              check?.checked_at
-                ? jsx(Muted, { children: `Checked ${ago(check.checked_at)}` })
-                : null,
-              data?.overall_pct != null
-                ? jsx(Muted, { children: `${data.overall_pct}% overall` })
-                : null,
+                : check?.checked_at
+                  ? jsx(Muted, { children: ago(check.checked_at) })
+                  : null,
             ],
           }),
         ],
       }),
 
-      jsx(Separator, {}),
+      switching
+        ? jsx(StreamSwitcher, {
+            fleet,
+            streamName,
+            liveName,
+            onPick: (name) => {
+              setPinned(name)
+              setSwitching(false)
+            },
+          })
+        : null,
 
-      pulse?.milestone_chips?.length
+      pulse?.milestone_chips?.length || pulse?.urls?.length
         ? jsxs('div', {
-            className: 'px-3 py-2 flex flex-col gap-1.5',
+            className: 'px-3.5 pb-2.5 flex flex-col gap-2',
             children: [
-              jsx(SectionLabel, { children: 'Milestones' }),
-              jsx(MilestoneRail, { chips: pulse.milestone_chips }),
+              pulse?.milestone_chips?.length
+                ? jsx(MilestoneRail, { chips: pulse.milestone_chips })
+                : null,
+              pulse?.urls?.length
+                ? jsx(UrlPills, { urls: pulse.urls })
+                : null,
             ],
           })
         : null,
 
-      pulse?.urls?.length
+      blockers.length
         ? jsxs('div', {
-            className: 'px-3 py-2 flex flex-col gap-1.5',
+            className: 'px-3.5 pb-2.5 flex flex-col gap-1.5',
             children: [
-              jsx(SectionLabel, { children: 'Live URLs' }),
-              jsx(UrlPills, { urls: pulse.urls }),
+              jsx(SectionLabel, { children: 'Blockers' }),
+              jsx(BlockerList, { blockers }),
             ],
           })
         : null,
 
-      jsxs('div', {
-        className: 'px-3 py-2 flex flex-col gap-1.5',
-        children: [
-          jsx(SectionLabel, { children: 'Blockers' }),
-          jsx(BlockerList, { blockers: pulse?.blockers }),
-        ],
-      }),
-
-      pulse?.prs?.length
+      prs.length
         ? jsxs('div', {
-            className: 'px-3 py-2 flex flex-col gap-1.5',
+            className: 'px-3.5 pb-2.5 flex flex-col gap-1.5',
             children: [
               jsx(SectionLabel, { children: 'Open PRs' }),
-              jsx(PrList, { prs: pulse.prs, compact: true, limit: 5 }),
+              jsx(PrList, { prs, compact: true, limit: 5, repo }),
             ],
           })
         : null,
 
-      jsx(Separator, {}),
-
-      jsxs('div', {
-        className: 'px-3 py-2 flex flex-col gap-2',
-        children: [
-          jsx(SectionLabel, { children: 'Constitution' }),
-          jsx(CoreChecklist, { core }),
-          jsx(ViolationList, { check }),
-        ],
-      }),
+      dirty
+        ? jsxs('div', {
+            className: 'px-3.5 pb-2.5 flex flex-col gap-1.5',
+            children: [
+              jsx(SectionLabel, { children: 'Constitution' }),
+              jsx(ViolationList, { check }),
+            ],
+          })
+        : null,
 
       jsx(Separator, {}),
 
@@ -850,14 +1084,21 @@ function StreamPopover({
           jsx(Button, {
             size: 'sm',
             variant: 'secondary',
-            className: 'flex-1',
             disabled: isFetching,
             onClick: onRefresh,
-            children: isFetching ? '…' : 'Recheck',
+            children: isFetching ? 'Checking…' : 'Recheck',
           }),
           jsx(Button, {
             size: 'sm',
-            variant: 'secondary',
+            variant: isPinned ? 'secondary' : 'ghost',
+            onClick: () => {
+              haptic('tap')
+              setPinned(isPinned ? '' : streamName)
+            },
+            children: isPinned ? 'Unpin' : 'Pin',
+          }),
+          jsx(Button, {
+            size: 'sm',
             className: 'flex-1',
             onClick: () => {
               haptic('tap')
@@ -865,15 +1106,6 @@ function StreamPopover({
               host.navigate('/workstream-map')
             },
             children: 'Open page',
-          }),
-          jsx(Button, {
-            size: 'sm',
-            variant: 'ghost',
-            onClick: () => {
-              haptic('tap')
-              onClose()
-            },
-            children: '✕',
           }),
         ],
       }),
@@ -891,38 +1123,6 @@ function StreamPopover({
 
 
 
-function usePersisted(ctx, key, fallback) {
-  const [value, setValue] = useState(fallback)
-  const [ready, setReady] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      try {
-        const v = await ctx.storage.get(key)
-        if (!cancelled && v != null && v !== '') setValue(v)
-      } catch {
-        /* ignore */
-      } finally {
-        if (!cancelled) setReady(true)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [ctx, key])
-
-  const set = (next) => {
-    setValue(next)
-    try {
-      void ctx.storage.set(key, next)
-    } catch {
-      /* ignore */
-    }
-  }
-
-  return [value, set, ready]
-}
 
 function WorkstreamPage({ ctx }) {
   const cwd = useValue(host.state.cwd)
@@ -1518,7 +1718,7 @@ function StreamDetail({
             jsx(DetailCard, {
               title: 'Open PRs',
               children: pulse?.prs?.length
-                ? jsx(PrList, { prs: pulse.prs, limit: 12 })
+                ? jsx(PrList, { prs: pulse.prs, limit: 12, repo: detail.repo })
                 : jsx(Muted, { children: 'None listed' }),
             }),
 

@@ -1,4 +1,5 @@
 /** @section format */
+
 export function extractStreamName(cwd) {
   if (!cwd) return null
   const m = String(cwd).match(/workstreams\/([^/]+)/)
@@ -28,8 +29,6 @@ export function errMsg(e) {
     raw = e.message || e.detail || e.error || String(e)
   }
 
-  // Electron wraps FastAPI 404 as:
-  // Error invoking remote method 'hermes:api': Error: 404: {"detail":"No such API endpoint: /api/plugins/workstreamer/list"}
   if (/No such API endpoint/i.test(raw) || (/404/.test(raw) && /workstreamer/.test(raw))) {
     return 'API not mounted on this dashboard. Copy the Python plugin to the SAME Hermes host Desktop is connected to (dashboard/manifest.json + plugins.enabled + restart). plugin.js alone is only the UI.'
   }
@@ -52,17 +51,15 @@ export function ago(ts) {
 export function stripMd(s) {
   return String(s || '')
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
-    .replace(/[*_`#]/g, (ch, _i, str) => {
-      // keep PR numbers like #29 — only strip heading hashes at start
-      return ch === '#' ? ch : ''
-    })
+    .replace(/[*_`]/g, '')
     .replace(/^\s*[-*•]+\s+/, '')
     .replace(/\s+/g, ' ')
     .trim()
 }
 
-/** Turn a STATUS-LIVE PR bullet into { number, title, extra, url }. */
-export function parsePr(raw) {
+/** Turn a STATUS-LIVE PR bullet into { number, title, extra, url }.
+ *  `repo` comes from the snapshot (git remote / AGENTS.md) — never a plugin table. */
+export function parsePr(raw, repo) {
   const source = String(raw || '')
   const urlMatch = source.match(/\((https?:\/\/[^)\s]+)\)/)
   const text = stripMd(source)
@@ -74,12 +71,70 @@ export function parsePr(raw) {
     rest = paren[1].trim()
     extra = paren[2].trim()
   }
+  const number = numMatch ? numMatch[1] : ''
+  const base = String(repo || '').replace(/\/+$/, '')
   return {
-    number: numMatch ? numMatch[1] : '',
+    number,
     title: rest || text || 'PR',
     extra,
-    url: urlMatch ? urlMatch[1] : '',
+    url: urlMatch ? urlMatch[1] : number && base ? `${base}/pull/${number}` : '',
     raw: text,
+  }
+}
+
+/** Expand a STATUS-LIVE host cell. Pattern, not a registry:
+ *  already-https stays; `fe.sq` / `bk.sq.dabbo.net` → https://… */
+export function hrefForUrl(name) {
+  const n = String(name || '').trim()
+  if (!n) return ''
+  if (/^https?:\/\//i.test(n)) return n
+  if (/^[a-z0-9-]+\.[a-z0-9-]+$/i.test(n) && !n.includes('/')) {
+    return `https://${n}.dabbo.net`
+  }
+  if (/^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(n)) return `https://${n}`
+  return ''
+}
+
+export async function copyText(text) {
+  const t = String(text || '')
+  if (!t) return false
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(t)
+      return true
+    }
+  } catch {
+    /* fall through */
+  }
+  try {
+    if (typeof host.copy === 'function') {
+      await host.copy(t)
+      return true
+    }
+  } catch {
+    /* ignore */
+  }
+  return false
+}
+
+export function openHref(href) {
+  if (!href) return
+  try {
+    if (typeof host.open === 'function') {
+      host.open(href)
+      return
+    }
+    if (typeof host.openExternal === 'function') {
+      host.openExternal(href)
+      return
+    }
+  } catch {
+    /* fall through */
+  }
+  try {
+    window.open(href, '_blank', 'noopener,noreferrer')
+  } catch {
+    /* ignore */
   }
 }
 
