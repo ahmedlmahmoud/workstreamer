@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# check-workstream.sh — validate {{STREAM_NAME}} workstream
+# Run: bash scripts/check-workstream.sh
+# Exit 0 = clean, exit 1 = violations found
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WORKSTREAM_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+VIOLATIONS=0
+
+red() { echo -e "\033[31m$*\033[0m"; }
+green() { echo -e "\033[32m$*\033[0m"; }
+
+echo "=== {{STREAM_NAME}} Workstream Check ==="
+echo "Root: $WORKSTREAM_ROOT"
+echo ""
+
+# ─── R1: Root allowlist ─────────────────────────────────────────────
+ALLOWED_ROOT="AGENTS.md INDEX.md TAXONOMY.md README.md AGENT-ONBOARDING.md INFRASTRUCTURE.md"
+cd "$WORKSTREAM_ROOT"
+for f in *.md; do
+    [ -f "$f" ] || continue
+    allowed=0
+    for a in $ALLOWED_ROOT; do
+        [ "$f" = "$a" ] && allowed=1
+    done
+    if [ "$allowed" = "0" ]; then
+        red "  R1 VIOLATION: $f at root — not in root allowlist"
+        VIOLATIONS=$((VIOLATIONS + 1))
+    fi
+done
+
+# ─── R1: No docs/ folder ───────────────────────────────────────────────
+if [ -d "$WORKSTREAM_ROOT/docs" ]; then
+    red "  R1 VIOLATION: docs/ folder exists — it is eliminated"
+    VIOLATIONS=$((VIOLATIONS + 1))
+fi
+
+# ─── R9: No root STATUS.md ─────────────────────────────────────────
+if [ -f "$WORKSTREAM_ROOT/STATUS.md" ]; then
+    red "  R9 VIOLATION: STATUS.md at root — use scope/STATUS-LIVE.md"
+    VIOLATIONS=$((VIOLATIONS + 1))
+fi
+
+# ─── R10: No secrets files ───────────────────────────────────────
+for secret in SECRETS.md .env; do
+    if [ -f "$WORKSTREAM_ROOT/$secret" ]; then
+        red "  R10 VIOLATION: $secret at root — secrets go in Infisical"
+        VIOLATIONS=$((VIOLATIONS + 1))
+    fi
+done
+
+echo ""
+if [ "$VIOLATIONS" -eq 0 ]; then
+    green "✓ CLEAN — no violations"
+    exit 0
+else
+    red "✗ DIRTY — $VIOLATIONS violation(s)"
+    exit 1
+fi

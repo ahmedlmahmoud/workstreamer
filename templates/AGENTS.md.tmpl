@@ -1,0 +1,36 @@
+# {{STREAM_NAME}} — Agent Operating Guide
+
+**Last updated:** {{DATE}}
+**This file is the authoritative guide for agents working in this workstream.**
+
+**Hermes profile:** `{{PROFILE_NAME}}`
+
+## Active folders
+
+| Folder | Purpose | Added |
+|--------|---------|-------|
+| — | No active folders yet | {{DATE}} |
+
+## Root allowlist
+
+Only these files are permitted at the workstream root:
+`AGENTS.md`, `INDEX.md`, `TAXONOMY.md`, `README.md`, `AGENT-ONBOARDING.md`, `INFRASTRUCTURE.md`
+
+Everything else goes in a subfolder.
+
+## Where new files go
+
+| You're creating... | Put it in | Naming |
+|---|---|---|
+| A research doc | `research/` (create if needed) | `{topic-slug}.md` |
+| A planning doc | `planning/` (create if needed) | `{topic}.md` |
+| A status snapshot | `scope/STATUS-LIVE.md` | Update in place |
+
+> Add rows to this table as your workstream grows.
+
+## References
+
+- `INDEX.md` — artifact lookup map
+- `scope/STATUS-LIVE.md` — ground-truth status
+- `scripts/check-workstream.sh` — enforcement script
+- `workstreams/AGENTS.md` — parent constitution

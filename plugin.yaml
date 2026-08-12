@@ -1,0 +1,11 @@
+name: workstreamer
+version: 0.1.0
+description: "Workstreamer — maintain dabbo-state workstream standards (skill + hooks + slash + Desktop UI)"
+manifest_version: 1
+provides_tools: []
+provides_hooks:
+  - pre_tool_call
+provides_commands:
+  - ws
+dashboard:
+  api: "plugin_api.py"
