@@ -11,10 +11,10 @@ Maintain [dabbo-state](https://github.com/ahmedlmahmoud/dabbo-state) workstream 
 | Layer | Job |
 |---|---|
 | **`pre_tool_call` hook** | Blocks `docs/`, root `STATUS.md`, `.env`, non-allowlisted root files |
-| **`/ws check`** | Runs `scripts/check-workstream.sh` |
-| **`/ws pulse`** | Reads `scope/STATUS-LIVE.md` |
-| **`/ws adopt <name>`** | Scaffolds a stream from **templates only** |
-| **`/ws truth`** | Light STATUS-LIVE vs live URL checks |
+| **`/stream check`** (alias `/workstream`, `/ws`) | Runs `scripts/check-workstream.sh` |
+| **`/stream pulse`** | Reads `scope/STATUS-LIVE.md` |
+| **`/stream adopt <name>`** | Scaffolds a stream from **templates only** |
+| **`/stream truth`** | Light STATUS-LIVE vs live URL checks |
 | **Desktop chip** | Title + milestone ticks + pin; switcher + copy/open in the popover |
 | **Popover** | Next action, ticks, clickable URLs, blockers, PRs linked via discovered repo |
 | **Workstreams page** | Left sidebar fleet + full-width detail (milestones, URLs, PRs, constitution) |

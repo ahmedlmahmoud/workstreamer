@@ -1,7 +1,7 @@
 ---
 name: workstreamer
-description: "Use when creating or maintaining dabbo-state workstreams — placement rules, root allowlist, red flags, gotchas, profile linking, check/pulse/adopt/truth slash commands, organic workstream model."
-version: 0.1.0
+description: "Use when creating or maintaining dabbo-state workstreams — placement rules, root allowlist, red flags, gotchas, profile linking, /workstream /stream slash commands, organic workstream model."
+version: 0.3.2
 ---
 
 # Workstreamer
@@ -57,22 +57,32 @@ Everything else → subfolder. Hook blocks writes to root.
 - AGENTS.md and INDEX.md must be updated together. Stale index worse than none.
 - `check-workstream.sh` runs at commit/CI. Must exit 0 for clean stream.
 - Profile `cwd` must match the workstream root. SanziQ's old `gethealth/repo` is fixed.
+- **Never type `/ stream` (space after slash).** That is an empty command.
+- **Do not use `/ws` in the slash search.** Hermes fuzzy-matches description
+  words; `ws` is a substring of `workflows`, so `/ws` surfaces
+  `inferio-development`. Type `/stream` or `/workstream` instead. `/ws` still
+  works as an exact alias once you press Enter on it.
 
 ## Slash commands
 
 | Command | Does |
 |---------|------|
-| `/ws check [name]` | Run check-workstream.sh |
-| `/ws pulse [name]` | Read STATUS-LIVE.md |
-| `/ws adopt <name>` | Create new workstream from templates |
-| `/ws truth [name]` | Verify STATUS-LIVE claims vs live URLs |
+| `/stream` / `/workstream` | Pulse the current stream (STATUS-LIVE) |
+| `/stream check [name]` | Run check-workstream.sh |
+| `/stream pulse [name]` | Read STATUS-LIVE.md |
+| `/stream adopt <name>` | Create new workstream from templates |
+| `/stream truth [name]` | Verify STATUS-LIVE claims vs live URLs |
+| `/ws …` | Exact alias only — do not search `/ws` |
+
+REST `GET /api/plugins/workstreamer/stream` is the Desktop chip API, not a
+slash command. The slash name is `/stream` (no space).
 
 ## Workstream organic model
 
 - Every stream starts with the 6 core files + `scripts/check-workstream.sh`
 - Folders appear when needed — never before
 - Active folders declared in `AGENTS.md`
-- New streams created via `/ws adopt <name>` (copies templates)
+- New streams created via `/stream adopt <name>` (copies templates)
 
 ## Profile linking
 

@@ -1,10 +1,26 @@
-"""Slash command handlers for /ws."""
+"""Slash command handlers for /workstream, /stream, and /ws.
 
-import subprocess
+``/ws`` is kept as an exact alias so muscle memory still works. It is a
+terrible *search* token: Hermes fuzzy-matches description words, and
+``ws`` is a substring of ``workflows`` — which is why ``/ws`` used to
+surface the inferio-development skill. Prefer ``/workstream`` or
+``/stream``.
+"""
+
+from __future__ import annotations
+
 import re
+import subprocess
 from pathlib import Path
 
 WORKSTREAMS_ROOT = Path("/home/ubuntu/dabbo-state/workstreams")
+_SUBS = frozenset({"check", "pulse", "adopt", "truth"})
+_USAGE = (
+    "Usage: /workstream [check|pulse|adopt|truth] [stream]\n"
+    "       /stream  [check|pulse|adopt|truth] [stream]\n"
+    "Bare /stream or /workstream pulses the current stream.\n"
+    "/stream <name> pulses that stream. Alias: /ws (exact only)."
+)
 
 
 def _resolve_stream(ctx, stream_arg=None):
@@ -21,11 +37,11 @@ def _resolve_stream(ctx, stream_arg=None):
 def _cmd_check(ctx, stream=None):
     name = _resolve_stream(ctx, stream)
     if not name:
-        return "Not inside a workstream. Specify one: /ws check <name>"
+        return "Not inside a workstream. Specify one: /workstream check <name>"
 
     script = WORKSTREAMS_ROOT / name / "scripts" / "check-workstream.sh"
     if not script.exists():
-        return f"No check script found for {name}. Run /ws adopt first?"
+        return f"No check script found for {name}. Run /workstream adopt first?"
 
     result = subprocess.run(
         ["bash", str(script)],
@@ -37,7 +53,7 @@ def _cmd_check(ctx, stream=None):
 def _cmd_pulse(ctx, stream=None):
     name = _resolve_stream(ctx, stream)
     if not name:
-        return "Not inside a workstream. Specify one: /ws pulse <name>"
+        return "Not inside a workstream. Specify one: /workstream pulse <name>"
 
     status_file = WORKSTREAMS_ROOT / name / "scope" / "STATUS-LIVE.md"
     if not status_file.exists():
@@ -95,7 +111,7 @@ def _cmd_adopt(ctx, stream: str):
 def _cmd_truth(ctx, stream=None):
     name = _resolve_stream(ctx, stream)
     if not name:
-        return "Not inside a workstream. Specify one: /ws truth <name>"
+        return "Not inside a workstream. Specify one: /workstream truth <name>"
 
     status_file = WORKSTREAMS_ROOT / name / "scope" / "STATUS-LIVE.md"
     if not status_file.exists():
@@ -118,33 +134,50 @@ def _cmd_truth(ctx, stream=None):
     return "\u2713 All STATUS-LIVE claims verified (URL checks only)."
 
 
+def dispatch_ws(raw_args: str = "") -> str:
+    """Shared handler for /workstream, /stream, and /ws."""
+    parts = raw_args.strip().split(maxsplit=1)
+    if not parts:
+        return _cmd_pulse(None, None)
+
+    head = parts[0].lower()
+    rest = parts[1] if len(parts) > 1 else ""
+
+    if head == "check":
+        return _cmd_check(None, rest or None)
+    if head == "pulse":
+        return _cmd_pulse(None, rest or None)
+    if head == "adopt":
+        if not rest:
+            return "Usage: /workstream adopt <stream-name>"
+        return _cmd_adopt(None, rest)
+    if head == "truth":
+        return _cmd_truth(None, rest or None)
+
+    # `/stream sanziq` — treat unknown first token as a stream name (pulse).
+    if rest:
+        return (
+            f"Unknown subcommand: {head}. Try: check, pulse, adopt, truth\n"
+            f"{_USAGE}"
+        )
+    return _cmd_pulse(None, head)
+
+
 def register_slash_commands(ctx):
-    def ws_handler(ctx, args_text: str = ""):
-        parts = args_text.strip().split(maxsplit=1)
-        sub = parts[0] if parts else "check"
-        rest = parts[1] if len(parts) > 1 else ""
-
-        if sub == "check":
-            return _cmd_check(ctx, rest or None)
-        elif sub == "pulse":
-            return _cmd_pulse(ctx, rest or None)
-        elif sub == "adopt":
-            if not rest:
-                return "Usage: /ws adopt <stream-name>"
-            return _cmd_adopt(ctx, rest)
-        elif sub == "truth":
-            return _cmd_truth(ctx, rest or None)
-        else:
-            return f"Unknown subcommand: {sub}. Try: check, pulse, adopt, truth"
-
     # PluginContext.register_command(name, handler, description="", args_hint="")
-    # — no aliases kwarg. Handler signature: fn(raw_args: str) -> str | None
-    def _handler(raw_args: str = "") -> str:
-        return ws_handler(None, raw_args)
+    # — no aliases kwarg. Register each name. Handler: fn(raw_args: str) -> str
+    desc = "Workstreamer: check, pulse, adopt, or truth a workstream"
+    hint = "[check|pulse|adopt|truth] [stream]"
 
-    ctx.register_command(
-        "ws",
-        handler=_handler,
-        description="Workstreamer: check, pulse, adopt, or truth a workstream",
-        args_hint="[check|pulse|adopt|truth] [stream]",
-    )
+    def _handler(raw_args: str = "") -> str:
+        return dispatch_ws(raw_args)
+
+    # Canonical first. /stream is what people type. /ws stays as exact alias
+    # only — do not advertise it (fuzzy-collides with "workflows").
+    for name in ("workstream", "stream", "ws"):
+        ctx.register_command(
+            name,
+            handler=_handler,
+            description=desc,
+            args_hint=hint,
+        )

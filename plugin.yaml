@@ -1,11 +1,13 @@
 name: workstreamer
-version: 0.3.1
+version: 0.3.2
 description: "Workstreamer — maintain dabbo-state workstream standards (skill + hooks + slash + Desktop UI)"
 manifest_version: 1
 provides_tools: []
 provides_hooks:
   - pre_tool_call
 provides_commands:
+  - workstream
+  - stream
   - ws
 # NOTE: dashboard backend is discovered from dashboard/manifest.json
 # (api: "plugin_api.py"), NOT from this field. Kept for documentation only.
