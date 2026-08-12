@@ -3,7 +3,10 @@
 Mounted at /api/plugins/workstreamer/ via dashboard/manifest.json.
 
 NOTE: Hermes loads this file via importlib.util.spec_from_file_location as a
-standalone module (not a package), so we bootstrap ``lib`` onto sys.path.
+standalone module (not a package). Helpers live in ``workstreamer_lib/``
+(NOT ``lib/``) so they cannot collide with another plugin that already
+registered ``sys.modules['lib']`` — that collision silently 404s every
+``/api/plugins/workstreamer/*`` route after auth.
 """
 
 from __future__ import annotations
@@ -17,10 +20,10 @@ _DASHBOARD_DIR = Path(__file__).resolve().parent
 if str(_DASHBOARD_DIR) not in sys.path:
     sys.path.insert(0, str(_DASHBOARD_DIR))
 
-from lib.check_runner import clear_check_cache, run_check  # noqa: E402
-from lib.constants import WORKSTREAMS_ROOT  # noqa: E402
-from lib.pulse import read_pulse  # noqa: E402
-from lib.snapshot import list_streams, resolve_stream, stream_snapshot  # noqa: E402
+from workstreamer_lib.check_runner import clear_check_cache, run_check  # noqa: E402
+from workstreamer_lib.constants import WORKSTREAMS_ROOT  # noqa: E402
+from workstreamer_lib.pulse import read_pulse  # noqa: E402
+from workstreamer_lib.snapshot import list_streams, resolve_stream, stream_snapshot  # noqa: E402
 
 router = APIRouter()
 

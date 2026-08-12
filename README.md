@@ -57,6 +57,8 @@ hermes gateway restart
 
 not from root `plugin.yaml` alone. Without `dashboard/manifest.json`, `/list` never mounts and the map looks empty.
 
+**Also critical:** never name the helper package `lib/`. Another plugin (`secure-my-profile`) already registers `sys.modules['lib']`. Workstreamer's old `from lib.check_runner` then fails at mount (`No module named 'lib.check_runner'`), discovery still reports `has_api: true`, and authenticated Desktop calls 404 with `No such API endpoint`. Helpers live in `dashboard/workstreamer_lib/`.
+
 ### 2) Desktop UI (your Mac)
 
 See **[DEPLOY-MAC.md](./DEPLOY-MAC.md)** for the short Mac path.
@@ -75,7 +77,9 @@ Then: **⌘K → Reload desktop plugins**.
 
 ```bash
 curl -s http://127.0.0.1:9119/api/dashboard/plugins | jq '.[] | select(.name=="workstreamer")'
-# has_api should be true. Raw /list may be 401 without cookie — OK if not 404.
+# has_api can be true even when the router FAILED to import (discovery ≠ mount).
+# After restart, journal must NOT say: Failed to load plugin workstreamer API routes
+# Authenticated /list must be 200. Unauthenticated 401 is expected; 404 is a miss.
 ```
 
 ---
@@ -142,7 +146,7 @@ Hermes `StatusDot` takes **`tone`**: `good | muted | warn | bad` — **not** `co
 dashboard/
 ├── manifest.json           # REQUIRED for mount
 ├── plugin_api.py           # thin router
-└── lib/
+└── workstreamer_lib/       # NEVER name this `lib/` — collisions 404 the API
     ├── constants.py
     ├── text.py
     ├── check_runner.py
@@ -160,4 +164,4 @@ dashboard/
 
 ## Version
 
-**0.2.0** — modular desktop + dashboard lib, StatusDot tones, files-browser pane sizing, resolve chain, STATUS-LIVE pulse UI.
+**0.2.1** — rename `dashboard/lib` → `dashboard/workstreamer_lib` so mount cannot collide with `secure-my-profile`'s `lib` package.

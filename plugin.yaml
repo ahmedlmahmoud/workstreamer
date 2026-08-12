@@ -1,5 +1,5 @@
 name: workstreamer
-version: 0.2.0
+version: 0.2.1
 description: "Workstreamer — maintain dabbo-state workstream standards (skill + hooks + slash + Desktop UI)"
 manifest_version: 1
 provides_tools: []

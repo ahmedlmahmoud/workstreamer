@@ -12,11 +12,17 @@ Error: 404: {"detail":"No such API endpoint: /api/plugins/workstreamer/list"}
 
 **Meaning:** Desktop `plugin.js` is loaded (it made the request). The **dashboard process that Desktop is connected to** does **not** have the Python API mounted.
 
+Two distinct causes look identical to Desktop:
+
+1. Plugin tree missing / not in `plugins.enabled` / dashboard not restarted
+2. **Router import failed at startup** — discovery still reports `has_api: true`. Classic: helper package named `lib/` colliding with another plugin (`secure-my-profile`) already in `sys.modules['lib']`. Journal: `Failed to load plugin workstreamer API routes: No module named 'lib.check_runner'`
+
 `plugin.js` is only the UI. Routes live in:
 
 ```
 ~/.hermes/plugins/workstreamer/dashboard/manifest.json   # discovery
 ~/.hermes/plugins/workstreamer/dashboard/plugin_api.py   # FastAPI router
+~/.hermes/plugins/workstreamer/dashboard/workstreamer_lib/
 ```
 
 on the **same host** as that dashboard, plus `workstreamer` in `plugins.enabled`, then a **dashboard/gateway restart**.
@@ -42,9 +48,13 @@ curl -s -o /tmp/w.json -w '%{http_code}\n' \
 # should include workstreamer with has_api: true
 curl -s http://127.0.0.1:9119/api/dashboard/plugins \
   | python3 -c "import sys,json; print([p for p in json.load(sys.stdin) if p.get('name')=='workstreamer'])"
+
+# mount success? this line must NOT appear after restart
+journalctl --user -u hermes-dashboard.service -b --no-pager \
+  | grep -i 'Failed to load plugin workstreamer'
 ```
 
-- **404** → plugin not on this host, or no `dashboard/manifest.json`, or not in `plugins.enabled`, or dashboard not restarted  
+- **404** → plugin not on this host, or no `dashboard/manifest.json`, or not in `plugins.enabled`, or dashboard not restarted, **or router import failed** (check journal)  
 - **401** → mounted; Desktop auth/cookie issue  
 - **200** → healthy  
 
@@ -75,7 +85,7 @@ Must exist after copy:
 ```
 ~/.hermes/plugins/workstreamer/dashboard/manifest.json
 ~/.hermes/plugins/workstreamer/dashboard/plugin_api.py
-~/.hermes/plugins/workstreamer/dashboard/lib/
+~/.hermes/plugins/workstreamer/dashboard/workstreamer_lib/
 ```
 
 ### B) Desktop UI — on the Mac
@@ -102,5 +112,6 @@ If you use a named profile, copy into **that profile’s** `$HERMES_HOME/desktop
 ## Do not
 
 - Install only `plugin.js` and expect `/list` to exist  
+- Name the Python helper package `lib/` — another plugin already owns that  
 - Long-term hand-edit assembled `plugin.js` — edit `desktop/src/*`, assemble, copy  
 - Write into profile secrets / `auth.json` / `.env`  
