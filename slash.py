@@ -137,9 +137,14 @@ def register_slash_commands(ctx):
         else:
             return f"Unknown subcommand: {sub}. Try: check, pulse, adopt, truth"
 
+    # PluginContext.register_command(name, handler, description="", args_hint="")
+    # — no aliases kwarg. Handler signature: fn(raw_args: str) -> str | None
+    def _handler(raw_args: str = "") -> str:
+        return ws_handler(None, raw_args)
+
     ctx.register_command(
-        name="ws",
-        aliases=("workstreamer", "stream"),
-        handler=ws_handler,
-        description="Workstreamer: check, pulse, adopt, or truth a workstream"
+        "ws",
+        handler=_handler,
+        description="Workstreamer: check, pulse, adopt, or truth a workstream",
+        args_hint="[check|pulse|adopt|truth] [stream]",
     )

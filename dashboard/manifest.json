@@ -1,0 +1,13 @@
+{
+  "name": "workstreamer",
+  "label": "Workstreamer",
+  "description": "Workstream constitution map + health for dabbo-state",
+  "icon": "FolderTree",
+  "version": "0.1.1",
+  "tab": {
+    "path": "/workstreamer",
+    "hidden": true
+  },
+  "slots": [],
+  "api": "plugin_api.py"
+}
