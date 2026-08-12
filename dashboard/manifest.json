@@ -1,9 +1,9 @@
 {
   "name": "workstreamer",
   "label": "Workstreamer",
-  "description": "Workstream constitution map + health for dabbo-state",
+  "description": "Workstream constitution + live STATUS pulse (chip, map, fleet)",
   "icon": "FolderTree",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "tab": {
     "path": "/workstreamer",
     "hidden": true

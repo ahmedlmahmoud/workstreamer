@@ -2,69 +2,162 @@
 
 Maintain [dabbo-state](https://github.com/ahmedlmahmoud/dabbo-state) workstream standards.
 
+**Desktop UI is production-oriented:** status chip + popover + fleet map, backed by a structured FastAPI (`/list`, `/stream`, `/check`, `/pulse`, `/resolve`).
+
+---
+
 ## What it does
 
-Workstreamer enforces workstream constitutions — your workstream's `AGENTS.md` is the law, and Workstreamer is the police:
+| Layer | Job |
+|---|---|
+| **`pre_tool_call` hook** | Blocks `docs/`, root `STATUS.md`, `.env`, non-allowlisted root files |
+| **`/ws check`** | Runs `scripts/check-workstream.sh` |
+| **`/ws pulse`** | Reads `scope/STATUS-LIVE.md` |
+| **`/ws adopt <name>`** | Scaffolds a stream from **templates only** |
+| **`/ws truth`** | Light STATUS-LIVE vs live URL checks |
+| **Desktop chip** | Current stream health · focus · down URLs (from `/stream`) |
+| **Popover** | Next action, milestones, live URLs, blockers, PRs, constitution, violations |
+| **Workstream Map** | Fleet stats, filters, search, detail drawer |
+| **Skill** | On-demand how-to (`/skill workstreamer`) |
 
-- **`pre_tool_call` hook** — blocks writes to `docs/`, `STATUS.md`, `.env`, and any non-allowlisted root file
-- **`/ws check`** — runs `scripts/check-workstream.sh` for your stream
-- **`/ws pulse`** — reads `scope/STATUS-LIVE.md` for your stream
-- **`/ws adopt <name>`** — creates a new workstream from templates
-- **`/ws truth`** — verifies STATUS-LIVE claims vs live URLs
-- **Desktop chip** — status bar shows current stream health (clean/dirty/unguided/outside)
-- **Workstream Map** — pane listing all workstreams with profile + health
+Constitution files live **in each workstream**. This plugin ships **templates + enforcement + UI** only.
 
-## Install
+---
 
-### Plugin (hooks + slash commands)
+## Install (Mac desktop + VPS gateway)
+
+Gateway/API and Desktop UI are separate surfaces.
+
+### 1) Python plugin (gateway + dashboard API)
+
+On the machine that runs **Hermes gateway / dashboard** (often the VPS):
 
 ```bash
-cp -r ~/.hermes/plugins/workstreamer/ /your/hermes/plugins/workstreamer/
+git clone https://github.com/ahmedlmahmoud/workstreamer.git
+# or: cd existing checkout && git pull
+
+mkdir -p ~/.hermes/plugins
+rsync -a --delete ./ ~/.hermes/plugins/workstreamer/ \
+  --exclude .git --exclude __pycache__ --exclude '*.pyc'
+
+# enable once in config.yaml under plugins.enabled:
+#   - workstreamer
+
 hermes gateway restart
+# if dashboard is a separate unit:
+# systemctl --user restart hermes-dashboard.service
 ```
 
-### Desktop UI
+**Critical:** Hermes mounts dashboard APIs from:
 
-Copy `desktop/plugin.js` to `$HERMES_HOME/desktop-plugins/workstreamer/plugin.js`, then **Reload desktop plugins** from ⌘K.
+```
+~/.hermes/plugins/workstreamer/dashboard/manifest.json
+  → "api": "plugin_api.py"
+```
 
-### Workstreamer skill
+not from root `plugin.yaml` alone. Without `dashboard/manifest.json`, `/list` never mounts and the map looks empty.
 
-The skill ships bundled inside the plugin. Hermes will discover it in `/ws` contexts or when you type `/skill workstreamer`.
+### 2) Desktop UI (your Mac)
 
-## Quick start
+See **[DEPLOY-MAC.md](./DEPLOY-MAC.md)** for the short Mac path.
 
 ```bash
-/ws adopt my-new-project   # create a workstream skeleton
-cd workstreams/my-new-project
-/ws check                   # validate it
-/ws pulse                   # see live status
+cd /path/to/workstreamer
+node desktop/assemble.mjs    # optional if plugin.js already built
+
+mkdir -p ~/.hermes/desktop-plugins/workstreamer
+cp desktop/plugin.js ~/.hermes/desktop-plugins/workstreamer/plugin.js
 ```
 
-## Requirements
+Then: **⌘K → Reload desktop plugins**.
 
-- Hermes with plugin support
-- Python 3.9+ (for hooks.py, slash.py, plugin_api.py)
-- Bash (for check-workstream.sh templates)
-- Hermes Desktop app (for Desktop UI chip + map pane)
+### 3) Verify API (gateway host)
 
-## Structure
+```bash
+curl -s http://127.0.0.1:9119/api/dashboard/plugins | jq '.[] | select(.name=="workstreamer")'
+# has_api should be true. Raw /list may be 401 without cookie — OK if not 404.
+```
+
+---
+
+## Desktop architecture
+
+Disk plugins **cannot** use relative imports (runtime allows only `@hermes/plugin-sdk` + `react*`).  
+Modular source → single assembled file:
 
 ```
-workstreamer/
-├── plugin.yaml              # Plugin manifest
-├── register.py              # Entry point (registers hooks + commands)
-├── hooks.py                 # pre_tool_call enforcement
-├── slash.py                 # /ws check/pulse/adopt/truth
-├── plugin_api.py            # FastAPI backend for Desktop JS
-├── skills/workstreamer/     # On-demand skill
-│   ├── SKILL.md
-│   └── references/rules.md  # R1-R10 checklist
-├── templates/               # Starter blueprints for /ws adopt
-│   ├── AGENTS.md.tmpl
-│   ├── INDEX.md.tmpl
-│   ├── TAXONOMY.md.tmpl
-│   ├── STATUS-LIVE.md.tmpl
-│   ├── check-workstream.sh.tmpl
-│   └── README.md.tmpl
-└── desktop/plugin.js        # Desktop UI (chip + popover + palette + map)
+desktop/
+├── src/                    # edit these
+│   ├── constants.js        # pane sizing, filters, storage keys
+│   ├── health.js           # health → StatusDot tone + badge
+│   ├── format.js           # cwd parse, ago, errors
+│   ├── atoms.js            # MilestoneRail, UrlPills, ProgressBar, …
+│   ├── chip.js             # status bar chip + popover
+│   ├── map.js              # fleet map pane / page
+│   └── plugin.entry.js     # register() surfaces
+├── assemble.mjs            # builds plugin.js (repo only — never profiles)
+└── plugin.js               # SHIP THIS to Mac desktop-plugins/
 ```
+
+### Pane resize (sash)
+
+Right rail sized like core **files** browser (fixed track + min/max):
+
+| Field | Value | Why |
+|---|---|---|
+| `width` | `237px` | Fixed track (sidebar semantics) |
+| `minWidth` | `10rem` | Shrink without collapse thrash |
+| `maxWidth` | `20rem` | Cap rail; leftover → main |
+| `placement` | `right` | Stacks with files/review |
+| `collapsible` | `true` | Narrow viewport overlay |
+
+**Do not** set only bare `width: '340px'` — that caused shrink-on-drag then snap-on-release.
+
+### StatusDot API
+
+Hermes `StatusDot` takes **`tone`**: `good | muted | warn | bad` — **not** `color: 'green'`.
+
+### Keybinds / palette
+
+| Action | Default |
+|---|---|
+| Show map | `mod+alt+w` |
+| Recheck current stream | `mod+alt+c` |
+| Palette | Workstreamer: Show Map / Recheck / Pulse |
+
+---
+
+## Backend API (`/api/plugins/workstreamer`)
+
+| Route | Purpose |
+|---|---|
+| `GET /health` | Plugin alive + workstreams root |
+| `GET /resolve?cwd=&profile=&stream=` | Explicit → profile link → cwd |
+| `GET /list?pulse=true&check=false` | Fleet list (issues-first) |
+| `GET /stream?stream=&check=true&force=` | Full snapshot for chip/popover |
+| `GET /check?stream=&force=` | Structured check (cached ~20s) |
+| `GET /pulse?stream=` | Parsed STATUS-LIVE |
+
+```
+dashboard/
+├── manifest.json           # REQUIRED for mount
+├── plugin_api.py           # thin router
+└── lib/
+    ├── constants.py
+    ├── text.py
+    ├── check_runner.py
+    ├── pulse.py
+    └── snapshot.py
+```
+
+---
+
+## Safety / handoff
+
+- **GitHub is the handoff.** VPS agents should not write Mac paths or sensitive named-profile trees (`auth.json`, `.env`, memories).
+- `desktop/assemble.mjs` writes **only** `desktop/plugin.js` inside this repo.
+- Plugin ships **templates**, never real project constitution files.
+
+## Version
+
+**0.2.0** — modular desktop + dashboard lib, StatusDot tones, files-browser pane sizing, resolve chain, STATUS-LIVE pulse UI.
