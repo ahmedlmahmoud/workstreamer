@@ -8,4 +8,4 @@ provides_hooks:
 provides_commands:
   - ws
 dashboard:
-  api: "plugin_api.py"
+  api: "dashboard/plugin_api.py"
