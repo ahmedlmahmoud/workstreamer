@@ -15,7 +15,7 @@ import {
   useQueryClient,
   useValue,
 } from '@hermes/plugin-sdk'
-import { jsx, jsxs, Fragment } from 'react/jsx-runtime'
+import { jsx, jsxs } from 'react/jsx-runtime'
 import { useState } from 'react'
 import {
   BlockerList,
@@ -23,6 +23,7 @@ import {
   HealthBadge,
   MilestoneRail,
   Muted,
+  PrList,
   SectionLabel,
   UrlPills,
   ViolationList,
@@ -52,7 +53,6 @@ export function WorkstreamChip({ ctx }) {
   const [open, setOpen] = useState(false)
   const qc = useQueryClient()
 
-  // Resolve: prefer cwd stream; if missing, ask backend via profile
   const { data: resolved } = useQuery({
     queryKey: [ID, 'resolve', streamFromCwd || '', profile || ''],
     queryFn: async () => {
@@ -83,7 +83,7 @@ export function WorkstreamChip({ ctx }) {
 
   if (!streamName) {
     return jsx(Tip, {
-      label: 'No workstream in cwd — open map',
+      label: 'No workstream in cwd — open page',
       children: jsxs('button', {
         type: 'button',
         className:
@@ -114,7 +114,6 @@ export function WorkstreamChip({ ctx }) {
     open,
     onOpenChange: setOpen,
     children: [
-      // Plain button trigger (no Tip-asChild nesting — Tip doesn't forward refs reliably).
       jsx(PopoverTrigger, {
         key: 'trigger',
         children: jsxs('button', {
@@ -222,7 +221,6 @@ function StreamPopover({
   return jsxs('div', {
     className: 'flex flex-col',
     children: [
-      // Header
       jsxs('div', {
         className: 'px-3 pt-3 pb-2 flex flex-col gap-1',
         children: [
@@ -320,22 +318,10 @@ function StreamPopover({
 
       pulse?.prs?.length
         ? jsxs('div', {
-            className: 'px-3 py-2 flex flex-col gap-1',
+            className: 'px-3 py-2 flex flex-col gap-1.5',
             children: [
               jsx(SectionLabel, { children: 'Open PRs' }),
-              jsx('div', {
-                className: 'flex flex-col gap-0.5',
-                children: pulse.prs.slice(0, 4).map((pr, i) =>
-                  jsx('div', {
-                    key: i,
-                    className: 'text-xs truncate',
-                    style: {
-                      color: 'var(--ui-text-secondary, var(--muted-foreground))',
-                    },
-                    children: pr,
-                  })
-                ),
-              }),
+              jsx(PrList, { prs: pulse.prs, compact: true, limit: 5 }),
             ],
           })
         : null,
@@ -373,7 +359,7 @@ function StreamPopover({
               onClose()
               host.navigate('/workstream-map')
             },
-            children: 'Map',
+            children: 'Open page',
           }),
           jsx(Button, {
             size: 'sm',

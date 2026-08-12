@@ -15,7 +15,7 @@ export function titleCase(name) {
 
 export function isApiMissing(e) {
   const s = errMsg(e)
-  return /No such API endpoint/i.test(s) || /\/api\/plugins\/workstreamer\//i.test(s) && /404/.test(s)
+  return /No such API endpoint/i.test(s) || (/\/api\/plugins\/workstreamer\//i.test(s) && /404/.test(s))
 }
 
 export function errMsg(e) {
@@ -47,6 +47,40 @@ export function ago(ts) {
   if (s < 3600) return `${Math.floor(s / 60)}m ago`
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`
   return `${Math.floor(s / 86400)}d ago`
+}
+
+export function stripMd(s) {
+  return String(s || '')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
+    .replace(/[*_`#]/g, (ch, _i, str) => {
+      // keep PR numbers like #29 — only strip heading hashes at start
+      return ch === '#' ? ch : ''
+    })
+    .replace(/^\s*[-*•]+\s+/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Turn a STATUS-LIVE PR bullet into { number, title, extra, url }. */
+export function parsePr(raw) {
+  const source = String(raw || '')
+  const urlMatch = source.match(/\((https?:\/\/[^)\s]+)\)/)
+  const text = stripMd(source)
+  const numMatch = text.match(/#(\d+)/)
+  let rest = text.replace(/#\d+\b\s*/, '').trim()
+  let extra = ''
+  const paren = rest.match(/^(.*?)\s*\(([^)]+)\)\s*$/)
+  if (paren) {
+    rest = paren[1].trim()
+    extra = paren[2].trim()
+  }
+  return {
+    number: numMatch ? numMatch[1] : '',
+    title: rest || text || 'PR',
+    extra,
+    url: urlMatch ? urlMatch[1] : '',
+    raw: text,
+  }
 }
 
 export function hostCwd() {

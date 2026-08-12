@@ -10,15 +10,15 @@ import {
 } from '@hermes/plugin-sdk'
 import { jsx } from 'react/jsx-runtime'
 import { WorkstreamChip } from './chip.js'
-import { ID, PANE_MAX_WIDTH, PANE_MIN_WIDTH, PANE_WIDTH } from './constants.js'
+import { ID } from './constants.js'
 import { errMsg, extractStreamName, hostCwd } from './format.js'
-import { WorkstreamMap } from './map.js'
+import { WorkstreamPage } from './map.js'
 
 async function runCheckNotify(ctx) {
   haptic('tap')
   const name = extractStreamName(hostCwd())
   if (!name) {
-    host.notify({ kind: 'info', message: 'Not inside a workstream — opening map' })
+    host.notify({ kind: 'info', message: 'Not inside a workstream — opening page' })
     host.navigate('/workstream-map')
     return
   }
@@ -67,16 +67,15 @@ const plugin = {
   id: ID,
   name: 'Workstreamer',
   description:
-    'Workstream constitution + live STATUS pulse — status chip, map pane, /ws checks.',
+    'Workstream constitution + live STATUS pulse — status chip and fleet page.',
   defaultEnabled: true,
 
   register(ctx) {
-    const openMap = () => {
+    const openPage = () => {
       haptic('tap')
       host.navigate('/workstream-map')
     }
 
-    // Status chip
     ctx.register({
       id: 'ws-status',
       area: STATUSBAR_AREAS.right,
@@ -84,7 +83,6 @@ const plugin = {
       render: () => jsx(WorkstreamChip, { ctx }),
     })
 
-    // Sidebar nav (always one click away)
     ctx.register({
       id: 'ws-nav',
       area: SIDEBAR_NAV_AREA,
@@ -96,38 +94,18 @@ const plugin = {
       },
     })
 
-    // Right rail pane — sized like files browser (fixed track + min/max)
-    // so sash drags don't snap/shrink-then-jump.
-    ctx.register({
-      id: 'workstream-map',
-      area: 'panes',
-      title: 'Workstreams',
-      data: {
-        placement: 'right',
-        collapsible: true,
-        dock: { pane: 'workspace', pos: 'right' },
-        width: PANE_WIDTH,
-        minWidth: PANE_MIN_WIDTH,
-        maxWidth: PANE_MAX_WIDTH,
-      },
-      render: () => jsx(WorkstreamMap, { ctx }),
-    })
-
-    // Full page route (same component — used by nav + palette)
+    // Full page only — no always-on right rail. Open via sidebar / chip / palette.
     ctx.register({
       id: 'workstream-map-page',
       area: ROUTES_AREA,
       data: { path: '/workstream-map' },
       render: () =>
         jsx('div', {
-          className: 'h-full w-full min-h-0',
-          // Constrain page width so it doesn't look like a stretched rail
-          style: { maxWidth: 420, margin: '0 auto' },
-          children: jsx(WorkstreamMap, { ctx }),
+          className: 'h-full w-full min-h-0 min-w-0',
+          children: jsx(WorkstreamPage, { ctx }),
         }),
     })
 
-    // Palette
     ctx.register({
       id: 'ws-check',
       area: PALETTE_AREA,
@@ -158,22 +136,21 @@ const plugin = {
       data: {
         id: 'workstreamer.map',
         action: 'workstreamer.map',
-        label: 'Workstreamer: Show Map',
-        keywords: ['workstream', 'map', 'fleet', 'ws'],
+        label: 'Workstreamer: Open page',
+        keywords: ['workstream', 'map', 'fleet', 'ws', 'page'],
         codicon: 'project',
-        run: openMap,
+        run: openPage,
       },
     })
 
-    // Keybinds (mod+alt namespace — free of core chords)
     ctx.register({
       id: 'ws-map-key',
       area: KEYBINDS_AREA,
       data: {
         id: 'workstreamer.map',
-        label: 'Workstreamer: Show Map',
+        label: 'Workstreamer: Open page',
         default: 'mod+alt+w',
-        run: openMap,
+        run: openPage,
       },
     })
     ctx.register({

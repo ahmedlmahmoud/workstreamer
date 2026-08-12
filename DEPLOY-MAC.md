@@ -102,12 +102,14 @@ Then **⌘K → Reload desktop plugins**.
 
 If you use a named profile, copy into **that profile’s** `$HERMES_HOME/desktop-plugins/workstreamer/plugin.js` only.
 
+If a stale **right rail** is still visible after reload, close that tab or restart Desktop once — the pane is no longer registered (v0.2.2+).
+
 ## Expect after both halves
 
 - Chip: live health / focus / down  
-- Popover: milestones, URLs, blockers  
-- Map: fleet list (not 404)  
-- Rail resizes like Files  
+- Popover: milestones, URLs, blockers, **parsed PRs** (`#29 SEO`) — not raw markdown  
+- Sidebar **Workstreams** → full page (left list + right detail), no always-on rail  
+- No right-area pane stealing space  
 
 ## Do not
 

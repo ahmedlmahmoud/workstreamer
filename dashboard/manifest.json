@@ -1,9 +1,9 @@
 {
   "name": "workstreamer",
   "label": "Workstreamer",
-  "description": "Workstream constitution + live STATUS pulse (chip, map, fleet)",
+  "description": "Workstream constitution + live STATUS pulse (chip + page)",
   "icon": "FolderTree",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "tab": {
     "path": "/workstreamer",
     "hidden": true

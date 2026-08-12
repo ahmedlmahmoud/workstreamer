@@ -7,6 +7,7 @@ import {
   cn,
 } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
+import { parsePr } from './format.js'
 import { badgeVariantForTone, healthMeta, toneOf } from './health.js'
 
 export function Muted({ children, className }) {
@@ -185,6 +186,50 @@ export function BlockerList({ blockers }) {
   })
 }
 
+export function PrList({ prs, compact = false, limit = 6 }) {
+  if (!prs?.length) return null
+  const items = prs.slice(0, limit).map(parsePr)
+  return jsx('div', {
+    className: 'flex flex-col',
+    children: items.map((pr, i) =>
+      jsxs('div', {
+        key: `${pr.number || pr.title}-${i}`,
+        className: cn(
+          'flex items-start gap-2 text-xs',
+          compact ? 'py-0.5' : 'py-1.5',
+          i > 0 && !compact ? 'border-t' : ''
+        ),
+        style: i > 0 && !compact
+          ? { borderColor: 'var(--ui-stroke-secondary, var(--border))' }
+          : undefined,
+        children: [
+          pr.number
+            ? jsx(Badge, {
+                variant: 'muted',
+                size: 'xs',
+                className: 'shrink-0 font-mono tabular-nums',
+                children: `#${pr.number}`,
+              })
+            : jsx(StatusDot, { tone: 'muted' }),
+          jsxs('div', {
+            className: 'min-w-0 flex-1 flex flex-col gap-0.5',
+            children: [
+              jsx('span', {
+                className: compact ? 'truncate' : 'leading-snug',
+                style: { color: 'var(--ui-text-secondary, var(--muted-foreground))' },
+                children: pr.title,
+              }),
+              pr.extra
+                ? jsx(Muted, { children: pr.extra })
+                : null,
+            ],
+          }),
+        ],
+      })
+    ),
+  })
+}
+
 export function ViolationList({ check }) {
   if (!check) return null
   if (check.status === 'no_script') {
@@ -273,5 +318,19 @@ export function RecheckButton({ onClick, busy, size = 'sm' }) {
     disabled: busy,
     onClick,
     children: busy ? '…' : 'Recheck',
+  })
+}
+
+export function DetailCard({ title, children, className }) {
+  return jsxs('section', {
+    className: cn(
+      'rounded-md border p-3 flex flex-col gap-2 min-w-0',
+      className
+    ),
+    style: { borderColor: 'var(--ui-stroke-secondary, var(--border))' },
+    children: [
+      title ? jsx(SectionLabel, { children: title }) : null,
+      children,
+    ],
   })
 }
