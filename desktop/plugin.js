@@ -152,6 +152,16 @@ function stripMd(s) {
     .trim()
 }
 
+/** True only for a real PR bullet (#29 or github.com/…/pull/29).
+ *  STATUS-LIVE preamble ("Last updated", "DO NOT TRUST") must never render. */
+function isPrLine(raw) {
+  const text = stripMd(raw)
+  if (!text) return false
+  if (/last updated/i.test(text)) return false
+  if (/do not trust/i.test(text)) return false
+  return /#\d+/.test(text) || /github\.com\/.+\/pull\/\d+/i.test(text)
+}
+
 /** Turn a STATUS-LIVE PR bullet into { number, title, extra, url }.
  *  `repo` comes from the snapshot (git remote / AGENTS.md) — never a plugin table. */
 function parsePr(raw, repo) {
@@ -168,12 +178,14 @@ function parsePr(raw, repo) {
   }
   const number = numMatch ? numMatch[1] : ''
   const base = String(repo || '').replace(/\/+$/, '')
+  const url = urlMatch ? urlMatch[1] : number && base ? `${base}/pull/${number}` : ''
   return {
     number,
     title: rest || text || 'PR',
     extra,
-    url: urlMatch ? urlMatch[1] : number && base ? `${base}/pull/${number}` : '',
+    url,
     raw: text,
+    valid: isPrLine(source),
   }
 }
 
@@ -483,8 +495,12 @@ function BlockerList({ blockers }) {
 }
 
 function PrList({ prs, compact = false, limit = 6, repo }) {
-  if (!prs?.length) return null
-  const items = prs.slice(0, limit).map(raw => parsePr(raw, repo))
+  const items = (prs || [])
+    .filter(isPrLine)
+    .slice(0, limit)
+    .map(raw => parsePr(raw, repo))
+    .filter(pr => pr.valid)
+  if (!items.length) return null
   return jsx('div', {
     className: 'flex flex-col',
     children: items.map((pr, i) => {
@@ -888,7 +904,7 @@ function StreamPopover({
   const hm = healthMeta(data?.health)
   const title = chipTitle(streamName, data)
   const blockers = pulse?.blockers || []
-  const prs = pulse?.prs || []
+  const prs = (pulse?.prs || []).filter(isPrLine)
   const down = pulse?.down_urls || []
   const viol = check?.violation_count || 0
   const dirty = check?.status === 'dirty' || check?.status === 'no_script' || viol > 0

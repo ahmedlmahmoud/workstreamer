@@ -28,7 +28,7 @@ import {
   ViolationList,
 } from './atoms.js'
 import { ID, STORAGE_KEYS } from './constants.js'
-import { ago, copyText, errMsg, extractStreamName, titleCase } from './format.js'
+import { ago, copyText, errMsg, extractStreamName, isPrLine, titleCase } from './format.js'
 import { healthMeta, toneOf } from './health.js'
 import { usePersisted } from './persist.js'
 
@@ -266,7 +266,7 @@ function StreamPopover({
   const hm = healthMeta(data?.health)
   const title = chipTitle(streamName, data)
   const blockers = pulse?.blockers || []
-  const prs = pulse?.prs || []
+  const prs = (pulse?.prs || []).filter(isPrLine)
   const down = pulse?.down_urls || []
   const viol = check?.violation_count || 0
   const dirty = check?.status === 'dirty' || check?.status === 'no_script' || viol > 0

@@ -8,7 +8,7 @@ import {
   haptic,
 } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
-import { hrefForUrl, openHref, parsePr } from './format.js'
+import { hrefForUrl, isPrLine, openHref, parsePr } from './format.js'
 import { healthMeta, toneOf } from './health.js'
 
 export function Muted({ children, className }) {
@@ -202,8 +202,12 @@ export function BlockerList({ blockers }) {
 }
 
 export function PrList({ prs, compact = false, limit = 6, repo }) {
-  if (!prs?.length) return null
-  const items = prs.slice(0, limit).map(raw => parsePr(raw, repo))
+  const items = (prs || [])
+    .filter(isPrLine)
+    .slice(0, limit)
+    .map(raw => parsePr(raw, repo))
+    .filter(pr => pr.valid)
+  if (!items.length) return null
   return jsx('div', {
     className: 'flex flex-col',
     children: items.map((pr, i) => {

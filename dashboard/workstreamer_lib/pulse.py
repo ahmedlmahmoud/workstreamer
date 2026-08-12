@@ -10,6 +10,9 @@ from typing import Any
 from .constants import STATUS_STALE_DAYS
 from .text import milestone_short_id, pct_from, status_tone, strip_md_links
 
+_PR_LINE = re.compile(r"#\d+|github\.com/.+/pull/\d+", re.I)
+_NOT_PR = re.compile(r"last updated|do not trust", re.I)
+
 
 def _split_md_row(line: str) -> list[str]:
     return [c.strip() for c in line.strip().strip("|").split("|")]
@@ -47,6 +50,12 @@ def _section_matches(key: str, parts: tuple[str, ...]) -> bool:
     if not key or key.startswith("_"):
         return False
     return any(p in key for p in parts)
+
+
+def _is_pr_line(text: str) -> bool:
+    if not text or _NOT_PR.search(text):
+        return False
+    return bool(_PR_LINE.search(text))
 
 
 def parse_status_live(text: str, *, mtime: float | None = None) -> dict[str, Any]:
@@ -148,7 +157,7 @@ def parse_status_live(text: str, *, mtime: float | None = None) -> dict[str, Any
                     out.append(s)
         return out
 
-    prs = bullets(("open pr", "prs", "pull request"))
+    prs = [p for p in bullets(("open pr", "prs", "pull request")) if _is_pr_line(p)]
     blockers = bullets(("blocker",))
 
     focus = None

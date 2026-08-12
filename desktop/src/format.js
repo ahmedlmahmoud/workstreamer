@@ -57,6 +57,16 @@ export function stripMd(s) {
     .trim()
 }
 
+/** True only for a real PR bullet (#29 or github.com/…/pull/29).
+ *  STATUS-LIVE preamble ("Last updated", "DO NOT TRUST") must never render. */
+export function isPrLine(raw) {
+  const text = stripMd(raw)
+  if (!text) return false
+  if (/last updated/i.test(text)) return false
+  if (/do not trust/i.test(text)) return false
+  return /#\d+/.test(text) || /github\.com\/.+\/pull\/\d+/i.test(text)
+}
+
 /** Turn a STATUS-LIVE PR bullet into { number, title, extra, url }.
  *  `repo` comes from the snapshot (git remote / AGENTS.md) — never a plugin table. */
 export function parsePr(raw, repo) {
@@ -73,12 +83,14 @@ export function parsePr(raw, repo) {
   }
   const number = numMatch ? numMatch[1] : ''
   const base = String(repo || '').replace(/\/+$/, '')
+  const url = urlMatch ? urlMatch[1] : number && base ? `${base}/pull/${number}` : ''
   return {
     number,
     title: rest || text || 'PR',
     extra,
-    url: urlMatch ? urlMatch[1] : number && base ? `${base}/pull/${number}` : '',
+    url,
     raw: text,
+    valid: isPrLine(source),
   }
 }
 
