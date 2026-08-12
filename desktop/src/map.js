@@ -165,7 +165,9 @@ export function WorkstreamMap({ ctx }) {
     return jsx('div', {
       className: 'p-4 h-full',
       children: jsx(ErrorState, {
-        title: 'Map failed to load',
+        title: /No such API|not mounted/i.test(errMsg(error))
+          ? 'Backend not installed on this dashboard'
+          : 'Map failed to load',
         description: errMsg(error),
         children: jsx(Button, {
           size: 'sm',

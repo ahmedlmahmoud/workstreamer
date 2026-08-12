@@ -112,13 +112,30 @@ function titleCase(name) {
     .join(' ')
 }
 
+function isApiMissing(e) {
+  const s = errMsg(e)
+  return /No such API endpoint/i.test(s) || /\/api\/plugins\/workstreamer\//i.test(s) && /404/.test(s)
+}
+
 function errMsg(e) {
   if (!e) return 'unknown error'
-  if (typeof e === 'string') return e
-  if (e.detail && typeof e.detail === 'object') {
-    return e.detail.error || e.detail.message || JSON.stringify(e.detail)
+  let raw = ''
+  if (typeof e === 'string') raw = e
+  else if (e.detail && typeof e.detail === 'object') {
+    raw = e.detail.error || e.detail.message || JSON.stringify(e.detail)
+  } else {
+    raw = e.message || e.detail || e.error || String(e)
   }
-  return e.message || e.detail || e.error || String(e)
+
+  // Electron wraps FastAPI 404 as:
+  // Error invoking remote method 'hermes:api': Error: 404: {"detail":"No such API endpoint: /api/plugins/workstreamer/list"}
+  if (/No such API endpoint/i.test(raw) || (/404/.test(raw) && /workstreamer/.test(raw))) {
+    return 'API not mounted on this dashboard. Copy the Python plugin to the SAME Hermes host Desktop is connected to (dashboard/manifest.json + plugins.enabled + restart). plugin.js alone is only the UI.'
+  }
+  if (/unauthenticated|Unauthorized|no_cookie/i.test(raw)) {
+    return 'Dashboard rejected the request (not logged in). Reconnect / log in to this dashboard.'
+  }
+  return raw
 }
 
 function ago(ts) {
@@ -933,7 +950,9 @@ function WorkstreamMap({ ctx }) {
     return jsx('div', {
       className: 'p-4 h-full',
       children: jsx(ErrorState, {
-        title: 'Map failed to load',
+        title: /No such API|not mounted/i.test(errMsg(error))
+          ? 'Backend not installed on this dashboard'
+          : 'Map failed to load',
         description: errMsg(error),
         children: jsx(Button, {
           size: 'sm',

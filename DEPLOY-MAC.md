@@ -1,51 +1,106 @@
 # Deploy Workstreamer on your Mac (Desktop)
 
-VPS agents push to GitHub. **You** deploy Desktop on the Mac.  
+VPS agents push to GitHub. **You** deploy on the Mac.  
 Do not let automation write into a sensitive Hermes profile’s private data.
 
-## Update Desktop UI
+## The 404 you just hit
+
+```
+Error invoking remote method 'hermes:api':
+Error: 404: {"detail":"No such API endpoint: /api/plugins/workstreamer/list"}
+```
+
+**Meaning:** Desktop `plugin.js` is loaded (it made the request). The **dashboard process that Desktop is connected to** does **not** have the Python API mounted.
+
+`plugin.js` is only the UI. Routes live in:
+
+```
+~/.hermes/plugins/workstreamer/dashboard/manifest.json   # discovery
+~/.hermes/plugins/workstreamer/dashboard/plugin_api.py   # FastAPI router
+```
+
+on the **same host** as that dashboard, plus `workstreamer` in `plugins.enabled`, then a **dashboard/gateway restart**.
+
+Desktop talks to whichever dashboard it is connected to:
+
+| Desktop connection | Where to install the Python plugin |
+|---|---|
+| Local Mac dashboard (default) | **Mac** `~/.hermes/plugins/workstreamer/` |
+| Remote VPS dashboard | **VPS** `~/.hermes/plugins/workstreamer/` + restart that dashboard |
+
+Copying only `desktop/plugin.js` to the Mac is not enough if Desktop uses a local Mac dashboard.
+
+### Check which host is 404ing
+
+On the host Desktop is connected to:
+
+```bash
+# 401 = route EXISTS (auth). 404 = not mounted.
+curl -s -o /tmp/w.json -w '%{http_code}\n' \
+  http://127.0.0.1:9119/api/plugins/workstreamer/health
+
+# should include workstreamer with has_api: true
+curl -s http://127.0.0.1:9119/api/dashboard/plugins \
+  | python3 -c "import sys,json; print([p for p in json.load(sys.stdin) if p.get('name')=='workstreamer'])"
+```
+
+- **404** → plugin not on this host, or no `dashboard/manifest.json`, or not in `plugins.enabled`, or dashboard not restarted  
+- **401** → mounted; Desktop auth/cookie issue  
+- **200** → healthy  
+
+## Install BOTH halves
+
+### A) Python plugin (dashboard API) — on the dashboard host
 
 ```bash
 git clone https://github.com/ahmedlmahmoud/workstreamer.git
-# or: git pull in existing clone
+# or: git pull
 
+mkdir -p ~/.hermes/plugins
+rsync -a --delete ./workstreamer/ ~/.hermes/plugins/workstreamer/ \
+  --exclude .git --exclude __pycache__ --exclude '*.pyc'
+
+# config.yaml — once:
+# plugins:
+#   enabled:
+#     - workstreamer
+
+hermes gateway restart
+# if dashboard is a separate unit:
+# systemctl --user restart hermes-dashboard.service
+```
+
+Must exist after copy:
+
+```
+~/.hermes/plugins/workstreamer/dashboard/manifest.json
+~/.hermes/plugins/workstreamer/dashboard/plugin_api.py
+~/.hermes/plugins/workstreamer/dashboard/lib/
+```
+
+### B) Desktop UI — on the Mac
+
+```bash
 cd workstreamer
-node desktop/assemble.mjs    # optional if plugin.js already committed built
+# optional: node desktop/assemble.mjs
 
 mkdir -p ~/.hermes/desktop-plugins/workstreamer
 cp desktop/plugin.js ~/.hermes/desktop-plugins/workstreamer/plugin.js
 ```
 
-If you use a **named profile** whose desktop home is not default `~/.hermes`, copy into **that profile’s** `$HERMES_HOME/desktop-plugins/workstreamer/plugin.js` only — never scatter copies into profile secrets trees.
+Then **⌘K → Reload desktop plugins**.
 
-## Reload
+If you use a named profile, copy into **that profile’s** `$HERMES_HOME/desktop-plugins/workstreamer/plugin.js` only.
 
-1. Hermes Desktop focused  
-2. **⌘K → Reload desktop plugins**  
-3. No “Plugin workstreamer failed to load” toast  
+## Expect after both halves
 
-## Expect
-
-- Status chip: live health / focus / down  
-- Chip click → popover (milestones, URLs, blockers, constitution)  
-- Sidebar **Workstreams** or palette **Workstreamer: Show Map**  
-- Right rail resizes smoothly (min/max like Files)  
-
-## Gateway dependency
-
-Chip/map use `ctx.rest` → `/api/plugins/workstreamer/*` on the **dashboard** process.
-
-On the gateway host:
-
-1. Plugin under `~/.hermes/plugins/workstreamer/`  
-2. `workstreamer` in `plugins.enabled`  
-3. `dashboard/manifest.json` present  
-4. Gateway/dashboard restarted after install  
-
-If the map shows **Map failed to load**, Desktop is fine — API not mounted or not reachable.
+- Chip: live health / focus / down  
+- Popover: milestones, URLs, blockers  
+- Map: fleet list (not 404)  
+- Rail resizes like Files  
 
 ## Do not
 
-- Long-term hand-edit assembled `plugin.js` on the Mac — edit `desktop/src/*`, assemble, copy  
-- Run scripts that write into profile homes / secrets  
-- Commit secrets into this repo  
+- Install only `plugin.js` and expect `/list` to exist  
+- Long-term hand-edit assembled `plugin.js` — edit `desktop/src/*`, assemble, copy  
+- Write into profile secrets / `auth.json` / `.env`  
