@@ -4,29 +4,23 @@
  */
 import {
   Button,
-  DropdownMenu,
   PALETTE_AREA,
-  ScrollArea,
+  ROUTES_AREA,
   Separator,
   StatusDot,
-  Tip,
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
   cn,
   haptic,
   host,
   useQuery,
-  useQueryClient
+  useValue
 } from '@hermes/plugin-sdk'
-import { jsx, jsxs, Fragment } from 'react/jsx-runtime'
-import { useCallback, useEffect, useState } from 'react'
+import { jsx, jsxs } from 'react/jsx-runtime'
+import { useState } from 'react'
 
 const ID = 'workstreamer'
-
-function resolveColor(ctx) {
-  const cwd = ctx.host.state.cwd.get()
-  if (!cwd) return 'dimmed'
-  if (cwd.includes('workstreams/')) return 'green'
-  return 'dimmed'
-}
 
 function extractStreamName(cwd) {
   if (!cwd) return null
@@ -34,19 +28,8 @@ function extractStreamName(cwd) {
   return m ? m[1] : null
 }
 
-// useValue helper (read reactive state)
-function useValue(atom) {
-  const [v, setV] = useState(atom ? atom.get() : null)
-  useEffect(() => {
-    if (!atom) return
-    const unsub = atom.subscribe(setV)
-    return unsub
-  }, [atom])
-  return v
-}
-
 function WorkstreamChip({ ctx }) {
-  const cwd = useValue(ctx.host.state.cwd)
+  const cwd = useValue(host.state.cwd)
   const streamName = extractStreamName(cwd)
   const [popoverOpen, setPopoverOpen] = useState(false)
 
@@ -118,7 +101,7 @@ function StreamPopover({ streamName, ctx, onClose }) {
           jsx(Button, {
             size: 'sm',
             variant: 'secondary',
-            onClick: () => { haptic('tap'); onClose(); ctx.host.navigate('/workstream-map'); }
+            onClick: () => { haptic('tap'); onClose(); host.navigate('/workstream-map'); }
           }, 'Map')
         ]
       })
@@ -160,7 +143,7 @@ function WorkstreamMap({ ctx }) {
   }
 
   const streams = data?.streams || []
-  const cwd = useValue(ctx.host.state.cwd)
+  const cwd = useValue(host.state.cwd)
   const activeStream = extractStreamName(cwd)
 
   return jsxs('div', { className: 'flex flex-col h-full', children: [
@@ -218,7 +201,7 @@ export default {
       id: 'ws-map',
       area: PALETTE_AREA,
       data: { label: 'Workstreamer: Show Map', codicon: 'project' },
-      render: () => ctx.host.navigate('/workstream-map')
+      render: () => host.navigate('/workstream-map')
     })
 
     ctx.register({
@@ -234,7 +217,7 @@ export default {
 
     ctx.register({
       id: 'workstream-map-page',
-      area: 'ROUTES_AREA',
+      area: ROUTES_AREA,
       data: { path: '/workstream-map' },
       render: () => jsx(WorkstreamMap, { ctx }),
     })
