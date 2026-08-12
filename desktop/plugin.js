@@ -132,6 +132,9 @@ function ViolationsList({ data }) {
 }
 
 function WorkstreamMap({ ctx }) {
+  const cwd = useValue(host.state.cwd)
+  const activeStream = extractStreamName(cwd)
+
   const { data, isLoading } = useQuery({
     queryKey: ['workstreamer', 'list'],
     queryFn: () => ctx.rest('/list').catch(() => ({ streams: [] })),
@@ -143,8 +146,6 @@ function WorkstreamMap({ ctx }) {
   }
 
   const streams = data?.streams || []
-  const cwd = useValue(host.state.cwd)
-  const activeStream = extractStreamName(cwd)
 
   return jsxs('div', { className: 'flex flex-col h-full', children: [
     jsx('div', { className: 'flex-1 overflow-auto', children:
