@@ -9,6 +9,8 @@ from typing import Any
 from .check_runner import run_check
 from .constants import CORE_FILES, DISPLAY_NAMES, WORKSTREAMS_ROOT
 from .pulse import read_pulse
+from .store import lists_payload
+from .widgets import widget_tabs
 from .text import discover_repo, display_name, extract_profile, milestone_short_id
 
 
@@ -56,19 +58,32 @@ def stream_snapshot(
     repo = discover_repo(d)
 
     pulse = read_pulse(status_live) if include_pulse else None
+    lists = lists_payload(name) if include_pulse else {
+        "ok": True,
+        "source": "skipped",
+        "error": "",
+        "pulse": None,
+        "view": None,
+    }
     check = run_check(name, force=force_check) if run_check_flag else None
+
+    lists_ok = bool(lists.get("ok"))
+    lists_view = lists.get("view") if lists_ok else None
+    lists_invalid = include_pulse and lists.get("source") == "invalid"
 
     if not agents.exists():
         health = "bare"
+    elif lists_invalid:
+        health = "dirty"
     elif check and check.get("status") == "dirty":
         health = "dirty"
     elif not adopted:
         health = "partial"
-    elif pulse and pulse.get("down_urls"):
+    elif (lists_view and lists_view.get("down_url_count")) or (pulse and pulse.get("down_urls")):
         health = "degraded"
     elif pulse and pulse.get("stale"):
         health = "stale"
-    elif pulse and pulse.get("blockers"):
+    elif (lists_view and lists_view.get("blocker_count")) or (pulse and pulse.get("blockers")):
         health = "active"
     elif check and check.get("status") == "clean":
         health = "clean"
@@ -76,7 +91,10 @@ def stream_snapshot(
         health = "adopted"
 
     focus_label = ""
-    if pulse and pulse.get("focus"):
+    next_m = (lists_view or {}).get("next_mission") if lists_view else None
+    if next_m:
+        focus_label = (next_m.get("title") or "")[:48]
+    elif pulse and pulse.get("focus"):
         f = pulse["focus"]
         mid_s = f.get("short_id") or milestone_short_id(f.get("id", ""))
         if f.get("pct") is not None:
@@ -97,6 +115,22 @@ def stream_snapshot(
         "bare": 7,
     }.get(health, 9)
 
+    blocker_count = (
+        int(lists_view.get("blocker_count") or 0)
+        if lists_view is not None
+        else (len(pulse["blockers"]) if pulse else 0)
+    )
+    down_url_count = (
+        int(lists_view.get("down_url_count") or 0)
+        if lists_view is not None
+        else (len(pulse["down_urls"]) if pulse else 0)
+    )
+    pr_count = (
+        int(lists_view.get("pr_count") or 0)
+        if lists_view is not None
+        else (len(pulse["prs"]) if pulse else 0)
+    )
+
     return {
         "name": name,
         "title": title,
@@ -106,18 +140,28 @@ def stream_snapshot(
         "has_index": index.exists(),
         "has_checker": core["has_checker"],
         "has_status": core["has_status"],
+        "has_lists": lists.get("source") == "pulse.json" and lists_ok,
+        "lists_ok": lists_ok,
+        "waiting_on_count": int((lists_view or {}).get("waiting_on_count") or 0),
         "profile": profile,
         "adopted": adopted,
         "core": core,
         "health": health,
         "severity": severity,
         "focus_label": focus_label,
-        "blocker_count": len(pulse["blockers"]) if pulse else 0,
-        "down_url_count": len(pulse["down_urls"]) if pulse else 0,
-        "pr_count": len(pulse["prs"]) if pulse else 0,
+        "blocker_count": blocker_count,
+        "down_url_count": down_url_count,
+        "pr_count": pr_count,
         "overall_pct": pulse.get("overall_pct") if pulse else None,
         "stale": bool(pulse and pulse.get("stale")),
         "pulse": pulse,
+        "lists": lists,
+        "widgets": widget_tabs(
+            lists.get("pulse") if lists_ok else None,
+            has_repo=bool(repo),
+            has_checker=core["has_checker"],
+            milestones=(pulse or {}).get("milestones") or [],
+        ),
         "check": check,
     }
 

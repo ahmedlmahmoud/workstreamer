@@ -12,4 +12,7 @@ export const STORAGE_KEYS = {
   filter: 'map.filter',
   selected: 'map.selected',
   pinned: 'chip.pinned',
+  view: 'chip.view',
+  morningDate: 'chip.morningDate',
+  pageTab: 'map.tab',
 }

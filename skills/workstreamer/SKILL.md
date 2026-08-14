@@ -1,7 +1,7 @@
 ---
 name: workstreamer
 description: "Use when creating or maintaining dabbo-state workstreams — placement rules, root allowlist, red flags, gotchas, profile linking, /workstream /stream slash commands, organic workstream model."
-version: 0.3.2
+version: 0.4.0
 ---
 
 # Workstreamer
@@ -34,6 +34,7 @@ Every workstream inherits from `workstreams/AGENTS.md` (the thin router).
 | Client asset | `client/` |
 | Deferred feature | `deferred/` |
 | Status | `scope/STATUS-LIVE.md` (update in place) |
+| Lists (missions / blockers / resources) | `scope/pulse.json` (update in place) |
 | Enforcement script | `scripts/check-workstream.sh` |
 
 ## Root allowlist
@@ -53,36 +54,42 @@ Everything else → subfolder. Hook blocks writes to root.
 ## Gotchas
 
 - `docs/` was eliminated in July 2026. If found, archive to `planning/_archive/`.
-- `STATUS.md` at root is always stale. Truth is `scope/STATUS-LIVE.md`.
+- `STATUS.md` at root is always stale. Story is `scope/STATUS-LIVE.md`. Lists are `scope/pulse.json`.
 - AGENTS.md and INDEX.md must be updated together. Stale index worse than none.
 - `check-workstream.sh` runs at commit/CI. Must exit 0 for clean stream.
-- Profile `cwd` must match the workstream root. SanziQ's old `gethealth/repo` is fixed.
+- Profile `cwd` must match the workstream root.
 - **Never type `/ stream` (space after slash).** That is an empty command.
 - **Do not use `/ws` in the slash search.** Hermes fuzzy-matches description
   words; `ws` is a substring of `workflows`, so `/ws` surfaces
   `inferio-development`. Type `/stream` or `/workstream` instead. `/ws` still
   works as an exact alias once you press Enter on it.
+- Helper Python package is `workstreamer_lib/` — never `lib/`.
+- Never restart `hermes-dashboard` / gateway from a child chat unless Ahmed
+  says so **this turn**.
 
 ## Slash commands
 
 | Command | Does |
 |---------|------|
-| `/stream` / `/workstream` | Pulse the current stream (STATUS-LIVE) |
+| `/stream` / `/workstream` | Lists from pulse.json, then STATUS-LIVE |
 | `/stream check [name]` | Run check-workstream.sh |
-| `/stream pulse [name]` | Read STATUS-LIVE.md |
-| `/stream adopt <name>` | Create new workstream from templates |
+| `/stream pulse [name]` | Lists + STATUS-LIVE.md |
+| `/stream adopt <name>` | Templates + empty valid `scope/pulse.json` |
+| `/stream add <title>` | One-line mission (`todo`) via the same writer |
+| `/stream flip <id> <status>` | Flip one mission via the same writer |
 | `/stream truth [name]` | Verify STATUS-LIVE claims vs live URLs |
 | `/ws …` | Exact alias only — do not search `/ws` |
 
 REST `GET /api/plugins/workstreamer/stream` is the Desktop chip API, not a
-slash command. The slash name is `/stream` (no space).
+slash command. `PATCH /api/plugins/workstreamer/stream?stream=` is the one
+writer. The slash name is `/stream` (no space).
 
 ## Workstream organic model
 
 - Every stream starts with the 6 core files + `scripts/check-workstream.sh`
 - Folders appear when needed — never before
 - Active folders declared in `AGENTS.md`
-- New streams created via `/stream adopt <name>` (copies templates)
+- New streams created via `/stream adopt <name>` (copies templates + pulse.json)
 
 ## Profile linking
 
@@ -95,5 +102,5 @@ Desktop chip uses this to anchor. Falls back to `terminal.cwd`.
 ## References
 
 - `workstreams/AGENTS.md` — parent constitution
-- `workstreams/sanziq/AGENTS.md` — reference workstream
+- `workstreams/workstreamer/AGENTS.md` — this product's stream
 - Rules checklist: `references/rules.md`

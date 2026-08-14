@@ -47,6 +47,18 @@ async function runPulseNotify(ctx) {
   }
   try {
     const r = await ctx.rest(`/pulse?stream=${encodeURIComponent(name)}`)
+    const lists = r.lists
+    if (lists?.ok && lists.view?.next_mission) {
+      const n = lists.view.next_mission
+      const wait = lists.view.waiting_on_count || 0
+      host.notify({
+        kind: wait ? 'error' : 'info',
+        message: wait
+          ? `${name}: ${n.title} · ${wait} waiting-on`
+          : `${name}: ${n.status} · ${n.title}`,
+      })
+      return
+    }
     const p = r.pulse
     if (!p) {
       host.notify({ kind: 'info', message: `${name}: no STATUS-LIVE.md` })
@@ -67,7 +79,7 @@ const plugin = {
   id: ID,
   name: 'Workstreamer',
   description:
-    'Workstream constitution + live STATUS pulse — status chip and fleet page.',
+    'Workstream pulse — chip jobs + fleet page. Lists live in scope/pulse.json.',
   defaultEnabled: true,
 
   register(ctx) {
@@ -94,7 +106,6 @@ const plugin = {
       },
     })
 
-    // Full page only — no always-on right rail. Open via sidebar / chip / palette.
     ctx.register({
       id: 'workstream-map-page',
       area: ROUTES_AREA,
@@ -125,7 +136,7 @@ const plugin = {
         id: 'workstreamer.pulse',
         action: 'workstreamer.pulse',
         label: 'Workstreamer: Pulse current stream',
-        keywords: ['workstream', 'workstreamer', 'stream', 'pulse', 'status', 'milestones', 'ws'],
+        keywords: ['workstream', 'workstreamer', 'stream', 'pulse', 'status', 'missions', 'ws'],
         codicon: 'pulse',
         run: () => runPulseNotify(ctx),
       },

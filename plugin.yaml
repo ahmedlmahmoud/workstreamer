@@ -1,10 +1,12 @@
 name: workstreamer
-version: 0.3.2
+version: 0.4.0
 description: "Workstreamer — maintain dabbo-state workstream standards (skill + hooks + slash + Desktop UI)"
 manifest_version: 1
 provides_tools: []
 provides_hooks:
   - pre_tool_call
+  - on_session_end
+  - on_session_finalize
 provides_commands:
   - workstream
   - stream

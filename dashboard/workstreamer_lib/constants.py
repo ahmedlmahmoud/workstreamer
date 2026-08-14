@@ -24,6 +24,7 @@ DISPLAY_NAMES = {
     "operations": "Operations",
     "upwork": "Upwork",
     "yengko": "Yengko",
+    "workstreamer": "Workstreamer",
 }
 
 # STATUS-LIVE older than this (days) is "stale"

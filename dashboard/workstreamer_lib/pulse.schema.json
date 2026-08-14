@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://workstreamer.local/pulse.schema.json",
+  "title": "Workstreamer pulse v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "version",
+    "stream",
+    "updated_at",
+    "revision",
+    "mode",
+    "timezone",
+    "pipeline",
+    "today",
+    "missions",
+    "blockers",
+    "resources",
+    "locks",
+    "notes",
+    "timeline"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "stream": { "type": "string", "minLength": 1 },
+    "updated_at": { "type": "string", "minLength": 10 },
+    "revision": { "type": "integer", "minimum": 0 },
+    "mode": { "enum": ["quiet", "steer", "hunt"] },
+    "timezone": { "type": "string", "minLength": 1 },
+    "pipeline": {
+      "type": "array",
+      "maxItems": 24,
+      "items": { "type": "string", "maxLength": 40 }
+    },
+    "today": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "date": { "type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "pinned_mission_ids": {
+          "type": "array",
+          "maxItems": 8,
+          "items": { "type": "string" }
+        },
+        "accepted": { "type": "boolean" }
+      }
+    },
+    "missions": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/mission" } },
+    "blockers": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/blocker" } },
+    "resources": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/resource" } },
+    "locks": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/lock" } },
+    "notes": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/note" } },
+    "timeline": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/event" } }
+  },
+  "$defs": {
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{1,62}$"
+    },
+    "mission": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "title", "status"],
+      "properties": {
+        "id": { "$ref": "#/$defs/slug" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "status": { "enum": ["todo", "doing", "blocked", "later", "done", "cancelled"] },
+        "order": { "type": "number" },
+        "due": { "type": ["string", "null"] },
+        "blocker_id": { "type": ["string", "null"] },
+        "goals": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+        "related": { "type": "array", "items": { "type": "string" } },
+        "note": { "type": ["string", "null"] }
+      }
+    },
+    "blocker": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "title", "kind", "status"],
+      "properties": {
+        "id": { "$ref": "#/$defs/slug" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "kind": { "enum": ["waiting-on", "stuck-on"] },
+        "waiting_on": { "type": ["string", "null"] },
+        "status": { "enum": ["open", "resolved"] },
+        "note": { "type": ["string", "null"] },
+        "resolved_at": { "type": ["string", "null"] }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "kind", "title"],
+      "properties": {
+        "id": { "$ref": "#/$defs/slug" },
+        "kind": { "enum": ["repo", "url", "file", "pr"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "url": { "type": "string" },
+        "status": { "enum": ["unknown", "up", "down", "open", "merged", "closed"] },
+        "checked_at": { "type": ["string", "null"] }
+      }
+    },
+    "lock": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "title"],
+      "properties": {
+        "id": { "$ref": "#/$defs/slug" },
+        "title": { "type": "string", "minLength": 1 },
+        "decided": { "type": ["string", "null"] },
+        "note": { "type": ["string", "null"] }
+      }
+    },
+    "note": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "text"],
+      "properties": {
+        "id": { "$ref": "#/$defs/slug" },
+        "at": { "type": "string" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "$ref": "#/$defs/slug" },
+        "at": { "type": "string" },
+        "kind": { "type": "string" },
+        "ref": { "type": ["string", "null"] },
+        "detail": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

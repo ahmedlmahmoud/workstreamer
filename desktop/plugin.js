@@ -5,7 +5,7 @@
  * Source of truth: desktop/src/*.js
  * Rebuild: node desktop/assemble.mjs
  *
- * Modules: constants, health, format, persist, atoms, chip, map, entry
+ * Modules: constants, health, format, persist, lists, atoms, chip, map, entry
  *
  * Deploy (Mac):
  *   mkdir -p ~/.hermes/desktop-plugins/workstreamer
@@ -17,6 +17,7 @@ import {
   Button,
   EmptyState,
   ErrorState,
+  Input,
   KEYBINDS_AREA,
   PALETTE_AREA,
   Popover,
@@ -56,6 +57,9 @@ const STORAGE_KEYS = {
   filter: 'map.filter',
   selected: 'map.selected',
   pinned: 'chip.pinned',
+  view: 'chip.view',
+  morningDate: 'chip.morningDate',
+  pageTab: 'map.tab',
 }
 
 
@@ -295,6 +299,170 @@ function usePersisted(ctx, key, fallback) {
   }
 
   return [value, set]
+}
+
+
+/* ──── lists.js ──── */
+/** @section lists — pulse.json helpers (chip + page share these) */
+
+const MISSION_STATUSES = ['todo', 'doing', 'blocked', 'later', 'done', 'cancelled']
+
+function listsOf(data) {
+  return data?.lists || null
+}
+
+function hasLists(data) {
+  const lists = listsOf(data)
+  return Boolean(lists?.ok && lists?.pulse && Array.isArray(lists.pulse.missions))
+}
+
+function listsInvalid(data) {
+  const lists = listsOf(data)
+  return Boolean(lists && lists.ok === false && lists.source === 'invalid')
+}
+
+function listsEmpty(data) {
+  const lists = listsOf(data)
+  return Boolean(lists?.ok && lists.source === 'empty')
+}
+
+function pulseOf(data) {
+  return hasLists(data) ? data.lists.pulse : null
+}
+
+function viewOf(data) {
+  return hasLists(data) ? data.lists.view || {} : {}
+}
+
+function sortedMissions(pulse) {
+  const items = Array.isArray(pulse?.missions) ? pulse.missions.slice() : []
+  return items.sort((a, b) => {
+    const ao = Number(a.order)
+    const bo = Number(b.order)
+    const an = Number.isFinite(ao) ? ao : 0
+    const bn = Number.isFinite(bo) ? bo : 0
+    if (an !== bn) return an - bn
+    return String(a.id || '').localeCompare(String(b.id || ''))
+  })
+}
+
+function openMissions(pulse) {
+  return sortedMissions(pulse).filter(m => m.status !== 'done' && m.status !== 'cancelled')
+}
+
+function nextMission(data) {
+  const v = viewOf(data)
+  if (v.next_mission) return v.next_mission
+  const pulse = pulseOf(data)
+  return openMissions(pulse)[0] || null
+}
+
+function openBlockers(pulse) {
+  return (pulse?.blockers || []).filter(b => b.status !== 'resolved')
+}
+
+function waitingOn(pulse) {
+  return openBlockers(pulse).filter(b => b.kind === 'waiting-on')
+}
+
+function stuckOn(pulse) {
+  return openBlockers(pulse).filter(b => b.kind === 'stuck-on')
+}
+
+function blockerById(pulse, id) {
+  if (!id) return null
+  return (pulse?.blockers || []).find(b => b.id === id) || null
+}
+
+function resourceById(pulse, id) {
+  if (!id) return null
+  return (pulse?.resources || []).find(r => r.id === id) || null
+}
+
+function todayISO(tz) {
+  try {
+    const fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz || 'Africa/Cairo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    })
+    return fmt.format(new Date())
+  } catch {
+    return new Date().toISOString().slice(0, 10)
+  }
+}
+
+/** Overdue first, then pins, then pile. Cap 3. */
+function recommendToday(pulse, tz) {
+  const date = todayISO(tz || pulse?.timezone)
+  const open = openMissions(pulse)
+  const pins = pulse?.today?.pinned_mission_ids || []
+  const byId = Object.fromEntries(open.map(m => [m.id, m]))
+  const rank = (m) => {
+    const overdue = m.due && String(m.due) <= date ? 0 : 1
+    const order = Number.isFinite(Number(m.order)) ? Number(m.order) : 0
+    return [overdue, order, String(m.id || '')]
+  }
+  const ranked = open.slice().sort((a, b) => {
+    const aa = rank(a)
+    const bb = rank(b)
+    for (let i = 0; i < aa.length; i++) {
+      if (aa[i] < bb[i]) return -1
+      if (aa[i] > bb[i]) return 1
+    }
+    return 0
+  })
+  const out = []
+  const seen = new Set()
+  // 1. overdue first
+  for (const m of ranked) {
+    if (m.due && String(m.due) <= date && m.id && !seen.has(m.id)) {
+      seen.add(m.id)
+      out.push(m)
+    }
+    if (out.length >= 3) return out.slice(0, 3)
+  }
+  // 2. last night's pins
+  for (const id of pins) {
+    if (byId[id] && !seen.has(id)) {
+      seen.add(id)
+      out.push(byId[id])
+    }
+    if (out.length >= 3) return out.slice(0, 3)
+  }
+  // 3. rest of the pile
+  for (const m of ranked) {
+    if (m.id && !seen.has(m.id)) {
+      seen.add(m.id)
+      out.push(m)
+    }
+    if (out.length >= 3) break
+  }
+  return out.slice(0, 3)
+}
+
+function isOverdue(m, date) {
+  return Boolean(m?.due && date && String(m.due) < date)
+}
+
+function statusTone(status) {
+  if (status === 'doing') return 'warn'
+  if (status === 'blocked') return 'bad'
+  if (status === 'done') return 'good'
+  if (status === 'cancelled' || status === 'later') return 'muted'
+  return 'muted'
+}
+
+function modeLabel(mode) {
+  if (mode === 'quiet') return 'quiet'
+  if (mode === 'hunt') return 'hunt'
+  return 'steer'
+}
+
+async function patchLists(ctx, stream, op) {
+  const q = `?stream=${encodeURIComponent(stream)}`
+  return ctx.rest(`/stream${q}`, { method: 'PATCH', body: op })
 }
 
 
@@ -670,9 +838,12 @@ function DetailCard({ title, children, className }) {
 
 
 
+
 function chipTitle(streamName, data) {
   return data?.title || titleCase(streamName) || streamName
 }
+
+const FLIP_CYCLE = ['todo', 'doing', 'later', 'done']
 
 function WorkstreamChip({ ctx }) {
   const cwd = useValue(host.state.cwd)
@@ -681,6 +852,8 @@ function WorkstreamChip({ ctx }) {
   const [open, setOpen] = useState(false)
   const [switching, setSwitching] = useState(false)
   const [pinned, setPinned] = usePersisted(ctx, STORAGE_KEYS.pinned, '')
+  const [view, setView] = usePersisted(ctx, STORAGE_KEYS.view, 'glance')
+  const [morningDate, setMorningDate] = usePersisted(ctx, STORAGE_KEYS.morningDate, '')
   const qc = useQueryClient()
 
   const { data: resolved } = useQuery({
@@ -741,12 +914,15 @@ function WorkstreamChip({ ctx }) {
   }
 
   const hm = healthMeta(data?.health)
-  const chips = data?.pulse?.milestone_chips || []
+  const pulse = pulseOf(data)
+  const nxt = nextMission(data)
+  const waitN = pulse ? waitingOn(pulse).length : (data?.waiting_on_count || 0)
   const title = chipTitle(streamName, data)
   const tipBits = [
     title,
     pinned && pinned !== liveName ? `pinned (cwd: ${liveName || '—'})` : null,
-    data?.pulse?.next_action ? `Next: ${data.pulse.next_action}` : data?.focus_label,
+    nxt ? `Next: ${nxt.title}` : data?.focus_label,
+    waitN ? `${waitN} waiting-on` : null,
     isError ? `Error: ${errMsg(error)}` : null,
   ].filter(Boolean)
 
@@ -763,7 +939,7 @@ function WorkstreamChip({ ctx }) {
           type: 'button',
           title: tipBits.join(' · ') || streamName,
           className: cn(
-            'inline-flex h-full max-w-[280px] items-center gap-1.5 rounded-none px-1.5',
+            'inline-flex h-full max-w-[300px] items-center gap-1.5 rounded-none px-1.5',
             'text-[0.6875rem] tabular-nums transition-colors',
             'hover:bg-(--chrome-action-hover)',
             isFetching && !data && 'opacity-70'
@@ -772,16 +948,18 @@ function WorkstreamChip({ ctx }) {
           children: [
             jsx(StatusDot, { tone: isError ? 'bad' : hm.tone }),
             jsx('span', { className: 'truncate font-medium', children: title }),
-            chips.length
+            nxt
               ? jsx('span', {
-                  className: 'hidden sm:inline-flex items-center gap-0.5 shrink-0',
-                  children: chips.slice(0, 6).map(c =>
-                    jsx(Tip, {
-                      key: c.id,
-                      label: `${c.id}${c.pct != null ? ` ${c.pct}%` : ''}${c.status ? ` — ${c.status}` : ''}`,
-                      children: jsx(StatusDot, { tone: toneOf(c.tone) }),
-                    })
-                  ),
+                  className: 'hidden sm:inline truncate max-w-[120px]',
+                  style: { color: 'var(--ui-text-quaternary)' },
+                  children: nxt.title,
+                })
+              : null,
+            waitN
+              ? jsx('span', {
+                  className: 'hidden sm:inline tabular-nums shrink-0',
+                  style: { color: 'var(--destructive)' },
+                  children: waitN,
                 })
               : null,
             pinned
@@ -795,15 +973,20 @@ function WorkstreamChip({ ctx }) {
       }),
       jsx(PopoverContent, {
         key: 'content',
-        className: 'w-96 max-h-[min(76vh,600px)] overflow-y-auto p-0',
+        className: 'w-[26rem] max-h-[min(80vh,640px)] overflow-y-auto p-0',
         align: 'end',
         children: jsx(StreamPopover, {
+          ctx,
           streamName,
           liveName,
           pinned,
           setPinned,
           switching,
           setSwitching,
+          view,
+          setView,
+          morningDate,
+          setMorningDate,
           fleet: fleet?.streams || [],
           data,
           isError,
@@ -824,6 +1007,12 @@ function WorkstreamChip({ ctx }) {
             }
             await refetch()
             qc.invalidateQueries({ queryKey: [ID, 'list'] })
+            qc.invalidateQueries({ queryKey: [ID, 'stream'] })
+          },
+          onMutated: async () => {
+            await refetch()
+            qc.invalidateQueries({ queryKey: [ID, 'list'] })
+            qc.invalidateQueries({ queryKey: [ID, 'stream'] })
           },
         }),
       }),
@@ -885,12 +1074,17 @@ function StreamSwitcher({ fleet, streamName, liveName, onPick }) {
 }
 
 function StreamPopover({
+  ctx,
   streamName,
   liveName,
   pinned,
   setPinned,
   switching,
   setSwitching,
+  view,
+  setView,
+  morningDate,
+  setMorningDate,
   fleet,
   data,
   isError,
@@ -898,33 +1092,41 @@ function StreamPopover({
   isFetching,
   onClose,
   onRefresh,
+  onMutated,
 }) {
-  const pulse = data?.pulse
+  const pulse = pulseOf(data)
   const check = data?.check
   const hm = healthMeta(data?.health)
   const title = chipTitle(streamName, data)
-  const blockers = pulse?.blockers || []
-  const prs = (pulse?.prs || []).filter(isPrLine)
-  const down = pulse?.down_urls || []
+  const nxt = nextMission(data)
+  const waitN = pulse ? waitingOn(pulse).length : 0
   const viol = check?.violation_count || 0
-  const dirty = check?.status === 'dirty' || check?.status === 'no_script' || viol > 0
-  const next = pulse?.next_action || data?.focus_label || ''
+  const dirty = check?.status === 'dirty' || check?.status === 'no_script' || viol > 0 || listsInvalid(data)
   const isPinned = pinned === streamName
-  const repo = data?.repo || ''
+  const tz = pulse?.timezone || 'Africa/Cairo'
+  const today = todayISO(tz)
+  const showMorning = Boolean(openMissions(pulse).length) && morningDate !== today && hasLists(data)
 
   if (isError && !data) {
+    const msg = errMsg(error)
+    const auth = /unauthenticated|Unauthorized|no_cookie|not logged in/i.test(msg)
+    const missing = /not mounted|No such API|404/i.test(msg)
     return jsxs('div', {
       className: 'p-3 flex flex-col gap-2',
       children: [
         jsx('div', {
           className: 'text-xs font-semibold',
           style: { color: 'var(--destructive)' },
-          children: 'Failed to load stream',
+          children: auth
+            ? 'Dashboard auth required'
+            : missing
+              ? 'Plugin API missing on this dashboard'
+              : 'Failed to load stream',
         }),
         jsx('div', {
           className: 'text-xs break-words',
           style: { color: 'var(--ui-text-secondary)' },
-          children: errMsg(error),
+          children: msg,
         }),
         jsxs('div', {
           className: 'flex gap-1.5',
@@ -946,6 +1148,8 @@ function StreamPopover({
       ],
     })
   }
+
+  const tab = view === 'jobs' ? 'jobs' : 'glance'
 
   return jsxs('div', {
     className: 'flex flex-col',
@@ -975,6 +1179,9 @@ function StreamPopover({
               jsxs('div', {
                 className: 'flex items-center gap-1 shrink-0',
                 children: [
+                  pulse?.mode
+                    ? jsx(Badge, { variant: 'muted', size: 'xs', children: pulse.mode })
+                    : null,
                   data?.profile
                     ? jsx(Badge, { variant: 'muted', size: 'xs', children: `@${data.profile}` })
                     : null,
@@ -984,53 +1191,47 @@ function StreamPopover({
             ],
           }),
 
-          next
-            ? jsxs('div', {
-                className: 'rounded-[4px] px-2.5 py-2 flex flex-col gap-1',
-                style: { background: 'var(--ui-stroke-secondary, var(--muted))' },
-                children: [
-                  jsxs('div', {
-                    className: 'flex items-center justify-between gap-2',
-                    children: [
-                      jsx(SectionLabel, { children: 'Next' }),
-                      jsx('button', {
-                        type: 'button',
-                        className: 'text-[10px]',
-                        style: { color: 'var(--ui-text-quaternary)' },
-                        onClick: async () => {
-                          haptic('tap')
-                          const ok = await copyText(next)
-                          host.notify({
-                            kind: ok ? 'success' : 'error',
-                            message: ok ? 'Copied next action' : 'Copy failed',
-                          })
-                        },
-                        children: 'Copy',
-                      }),
-                    ],
-                  }),
-                  jsx('div', {
-                    className: 'text-xs leading-snug font-medium',
-                    style: { color: 'var(--ui-text-secondary, var(--muted-foreground))' },
-                    children: next,
-                  }),
-                ],
-              })
-            : null,
+          jsxs('div', {
+            className: 'flex items-center gap-1',
+            children: [
+              jsx(Button, {
+                size: 'xs',
+                variant: tab === 'glance' ? 'secondary' : 'ghost',
+                onClick: () => {
+                  haptic('tap')
+                  setView('glance')
+                },
+                children: 'Glance',
+              }),
+              jsx(Button, {
+                size: 'xs',
+                variant: tab === 'jobs' ? 'secondary' : 'ghost',
+                disabled: listsInvalid(data),
+                onClick: () => {
+                  haptic('tap')
+                  setView('jobs')
+                },
+                children: 'Jobs',
+              }),
+            ],
+          }),
 
           jsxs('div', {
             className: 'flex items-center gap-2.5 flex-wrap',
             children: [
-              jsx(Count, { n: blockers.length, label: 'blockers', tone: blockers.length ? 'warn' : null }),
-              jsx(Count, { n: down.length, label: 'down', tone: down.length ? 'bad' : null }),
-              jsx(Count, { n: prs.length, label: 'PRs' }),
-              pulse?.updated
-                ? jsx(Muted, {
-                    children: pulse.stale ? `${pulse.updated} · stale` : pulse.updated,
-                  })
-                : check?.checked_at
-                  ? jsx(Muted, { children: ago(check.checked_at) })
-                  : null,
+              jsx(Count, { n: waitN, label: 'waiting-on', tone: waitN ? 'bad' : null }),
+              jsx(Count, {
+                n: data?.blocker_count,
+                label: 'blockers',
+                tone: data?.blocker_count ? 'warn' : null,
+              }),
+              pulse?.updated_at
+                ? jsx(Muted, { children: pulse.updated_at.slice(0, 10) })
+                : data?.pulse?.updated
+                  ? jsx(Muted, { children: data.pulse.updated })
+                  : check?.checked_at
+                    ? jsx(Muted, { children: ago(check.checked_at) })
+                    : null,
             ],
           }),
         ],
@@ -1048,49 +1249,37 @@ function StreamPopover({
           })
         : null,
 
-      pulse?.milestone_chips?.length || pulse?.urls?.length
-        ? jsxs('div', {
-            className: 'px-3.5 pb-2.5 flex flex-col gap-2',
-            children: [
-              pulse?.milestone_chips?.length
-                ? jsx(MilestoneRail, { chips: pulse.milestone_chips })
-                : null,
-              pulse?.urls?.length
-                ? jsx(UrlPills, { urls: pulse.urls })
-                : null,
-            ],
+      listsInvalid(data)
+        ? jsx(FailClosedBanner, { error: data?.lists?.error })
+        : null,
+
+      showMorning && tab === 'glance'
+        ? jsx(MorningRec, {
+            ctx,
+            streamName,
+            pulse,
+            today,
+            onDone: (d) => setMorningDate(d || today),
+            onMutated,
           })
         : null,
 
-      blockers.length
-        ? jsxs('div', {
-            className: 'px-3.5 pb-2.5 flex flex-col gap-1.5',
-            children: [
-              jsx(SectionLabel, { children: 'Blockers' }),
-              jsx(BlockerList, { blockers }),
-            ],
+      tab === 'jobs'
+        ? jsx(JobsPane, {
+            ctx,
+            streamName,
+            data,
+            pulse,
+            today,
+            onMutated,
           })
-        : null,
-
-      prs.length
-        ? jsxs('div', {
-            className: 'px-3.5 pb-2.5 flex flex-col gap-1.5',
-            children: [
-              jsx(SectionLabel, { children: 'Open PRs' }),
-              jsx(PrList, { prs, compact: true, limit: 5, repo }),
-            ],
-          })
-        : null,
-
-      dirty
-        ? jsxs('div', {
-            className: 'px-3.5 pb-2.5 flex flex-col gap-1.5',
-            children: [
-              jsx(SectionLabel, { children: 'Constitution' }),
-              jsx(ViolationList, { check }),
-            ],
-          })
-        : null,
+        : jsx(GlancePane, {
+            data,
+            pulse,
+            nxt,
+            dirty,
+            check,
+          }),
 
       jsx(Separator, {}),
 
@@ -1129,9 +1318,393 @@ function StreamPopover({
   })
 }
 
+function FailClosedBanner({ error }) {
+  return jsxs('div', {
+    className: 'mx-3.5 mb-2 rounded-[4px] px-2.5 py-2 flex flex-col gap-0.5',
+    style: { background: 'color-mix(in oklab, var(--destructive) 12%, transparent)' },
+    children: [
+      jsx('div', {
+        className: 'text-[11px] font-semibold',
+        style: { color: 'var(--destructive)' },
+        children: 'pulse.json invalid — not overwritten',
+      }),
+      jsx(Muted, { children: error || 'Fix the file by hand. Jobs disabled.' }),
+    ],
+  })
+}
+
+function GlancePane({ data, pulse, nxt, dirty, check }) {
+  const nextTitle = nxt?.title || data?.pulse?.next_action || data?.focus_label || ''
+  return jsxs('div', {
+    className: 'px-3.5 pb-2.5 flex flex-col gap-2',
+    children: [
+      nextTitle
+        ? jsxs('div', {
+            className: 'rounded-[4px] px-2.5 py-2 flex flex-col gap-1',
+            style: { background: 'var(--ui-stroke-secondary, var(--muted))' },
+            children: [
+              jsxs('div', {
+                className: 'flex items-center justify-between gap-2',
+                children: [
+                  jsx(SectionLabel, { children: 'Next' }),
+                  jsx('button', {
+                    type: 'button',
+                    className: 'text-[10px]',
+                    style: { color: 'var(--ui-text-quaternary)' },
+                    onClick: async () => {
+                      haptic('tap')
+                      const ok = await copyText(nextTitle)
+                      host.notify({
+                        kind: ok ? 'success' : 'error',
+                        message: ok ? 'Copied next mission' : 'Copy failed',
+                      })
+                    },
+                    children: 'Copy',
+                  }),
+                ],
+              }),
+              jsx('div', {
+                className: 'text-xs leading-snug font-medium',
+                style: { color: 'var(--ui-text-secondary, var(--muted-foreground))' },
+                children: nextTitle,
+              }),
+              nxt?.status
+                ? jsx(Muted, { children: nxt.status })
+                : null,
+            ],
+          })
+        : jsx(Muted, { children: hasLists(data) ? 'Pile is empty.' : 'No pulse yet — Jobs after first write.' }),
+      dirty
+        ? jsxs('div', {
+            className: 'flex flex-col gap-1',
+            children: [
+              jsx(SectionLabel, { children: 'Checks' }),
+              listsInvalid(data)
+                ? jsx(Muted, { children: 'pulse.json invalid' })
+                : jsx(ViolationList, { check }),
+            ],
+          })
+        : null,
+      !pulse && data?.pulse?.urls?.length
+        ? jsx(Muted, { children: 'Glance from STATUS-LIVE — lists not mounted yet.' })
+        : null,
+    ],
+  })
+}
+
+function MorningRec({ ctx, streamName, pulse, today, onDone, onMutated }) {
+  const rec = recommendToday(pulse, pulse?.timezone)
+  const [busy, setBusy] = useState(false)
+  if (!rec.length) return null
+
+  const pinToday = async (id, { swap } = {}) => {
+    setBusy(true)
+    haptic('tap')
+    try {
+      if (swap) {
+        const open = (pulse?.missions || []).filter(m => m.status !== 'done' && m.status !== 'cancelled')
+        const ids = [id, ...open.map(m => m.id).filter(x => x !== id)]
+        await patchLists(ctx, streamName, { op: 'reorder', collection: 'missions', ids })
+      }
+      await patchLists(ctx, streamName, {
+        op: 'patch_meta',
+        meta: { today: { date: today, pinned_mission_ids: [id], accepted: true } },
+      })
+      onDone(today)
+      await onMutated()
+    } catch (e) {
+      host.notify({ kind: 'error', message: errMsg(e) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return jsxs('div', {
+    className: 'mx-3.5 mb-2 rounded-[4px] border px-2.5 py-2 flex flex-col gap-1.5',
+    style: { borderColor: 'var(--ui-stroke-secondary, var(--border))' },
+    children: [
+      jsxs('div', {
+        className: 'flex items-center justify-between',
+        children: [
+          jsx(SectionLabel, { children: 'Today?' }),
+          jsx('button', {
+            type: 'button',
+            className: 'text-[10px]',
+            style: { color: 'var(--ui-text-quaternary)' },
+            disabled: busy,
+            onClick: () => {
+              haptic('tap')
+              onDone(today)
+            },
+            children: 'Skip',
+          }),
+        ],
+      }),
+      rec.map(m =>
+        jsxs('div', {
+          key: m.id,
+          className: 'flex items-center gap-2 text-xs',
+          children: [
+            jsx(StatusDot, { tone: statusTone(m.status) }),
+            jsx('span', { className: 'flex-1 truncate', children: m.title }),
+            m.due ? jsx(Muted, { children: m.due }) : null,
+            jsx(Button, {
+              size: 'xs',
+              variant: 'ghost',
+              disabled: busy,
+              onClick: () => pinToday(m.id),
+              children: 'Accept',
+            }),
+            jsx(Button, {
+              size: 'xs',
+              variant: 'ghost',
+              disabled: busy,
+              onClick: () => pinToday(m.id, { swap: true }),
+              children: 'Swap',
+            }),
+          ],
+        })
+      ),
+    ],
+  })
+}
+
+function JobsPane({ ctx, streamName, data, pulse, today, onMutated }) {
+  const [draft, setDraft] = useState('')
+  const [noteLine, setNoteLine] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [dragId, setDragId] = useState('')
+
+  if (listsInvalid(data)) {
+    return jsx('div', {
+      className: 'px-3.5 pb-2',
+      children: jsx(Muted, { children: 'Jobs disabled until pulse.json is valid.' }),
+    })
+  }
+  if (!hasLists(data) && !listsEmpty(data)) {
+    return jsx('div', {
+      className: 'px-3.5 pb-2',
+      children: jsx(Muted, { children: 'no pulse yet — first add creates it' }),
+    })
+  }
+
+  const items = openMissions(pulse)
+  const revision = pulse?.revision
+
+  const flip = async (m) => {
+    const i = FLIP_CYCLE.indexOf(m.status)
+    const next = FLIP_CYCLE[(i + 1) % FLIP_CYCLE.length]
+    haptic('tap')
+    setBusy(true)
+    try {
+      await patchLists(ctx, streamName, {
+        op: 'upsert',
+        collection: 'missions',
+        id: m.id,
+        record: { status: next },
+        base_revision: revision,
+      })
+      await onMutated()
+    } catch (e) {
+      host.notify({ kind: 'error', message: errMsg(e) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const add = async () => {
+    const title = draft.trim()
+    if (!title) return
+    haptic('tap')
+    setBusy(true)
+    try {
+      await patchLists(ctx, streamName, {
+        op: 'upsert',
+        collection: 'missions',
+        record: { title, status: 'todo' },
+        base_revision: revision,
+      })
+      setDraft('')
+      await onMutated()
+    } catch (e) {
+      host.notify({ kind: 'error', message: errMsg(e) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const reorder = async (fromId, toId) => {
+    if (!fromId || !toId || fromId === toId) return
+    const ids = items.map(m => m.id)
+    const from = ids.indexOf(fromId)
+    const to = ids.indexOf(toId)
+    if (from < 0 || to < 0) return
+    ids.splice(from, 1)
+    ids.splice(to, 0, fromId)
+    haptic('tap')
+    try {
+      await patchLists(ctx, streamName, {
+        op: 'reorder',
+        collection: 'missions',
+        ids,
+        base_revision: revision,
+      })
+      await onMutated()
+    } catch (e) {
+      host.notify({ kind: 'error', message: errMsg(e) })
+    }
+  }
+
+  return jsxs('div', {
+    className: 'px-3.5 pb-2 flex flex-col gap-1.5',
+    children: [
+      items.length
+        ? items.map(m => {
+            const blk = m.status === 'blocked' ? blockerById(pulse, m.blocker_id) : null
+            const rel = (m.related || []).map(id => resourceById(pulse, id)).filter(Boolean)
+            return jsxs('div', {
+              key: m.id,
+              className: cn(
+                'flex flex-col gap-0.5 rounded-[4px] px-2 py-1.5',
+                dragId === m.id && 'opacity-60'
+              ),
+              style: { background: 'var(--ui-stroke-secondary, var(--muted))' },
+              draggable: true,
+              onDragStart: () => setDragId(m.id),
+              onDragOver: (e) => {
+                e.preventDefault()
+              },
+              onDrop: (e) => {
+                e.preventDefault()
+                const from = dragId
+                setDragId('')
+                void reorder(from, m.id)
+              },
+              onDragEnd: () => setDragId(''),
+              children: [
+                jsxs('div', {
+                  className: 'flex items-center gap-1.5 text-xs min-w-0',
+                  children: [
+                    jsx('span', {
+                      className: 'cursor-grab shrink-0 text-[10px]',
+                      style: { color: 'var(--ui-text-quaternary)' },
+                      children: '⋮⋮',
+                    }),
+                    jsx(StatusDot, { tone: statusTone(m.status) }),
+                    jsx('span', { className: 'flex-1 truncate font-medium', children: m.title }),
+                    isOverdue(m, today) || m.due
+                      ? jsx(Muted, { children: m.due })
+                      : null,
+                    jsx('button', {
+                      type: 'button',
+                      className: 'text-[10px] shrink-0 uppercase tracking-wide',
+                      style: { color: 'var(--ui-text-quaternary)' },
+                      disabled: busy,
+                      onClick: () => flip(m),
+                      children: m.status,
+                    }),
+                  ],
+                }),
+                blk
+                  ? jsx('div', {
+                      className: 'pl-5 text-[10px]',
+                      style: { color: 'var(--destructive)' },
+                      children: `stuck · ${blk.title}`,
+                    })
+                  : null,
+                rel.length
+                  ? jsx('div', {
+                      className: 'pl-5 flex gap-1.5 flex-wrap',
+                      children: rel.slice(0, 3).map(r =>
+                        jsx('button', {
+                          key: r.id,
+                          type: 'button',
+                          className: 'text-[10px] underline-offset-2 hover:underline',
+                          style: { color: 'var(--ui-text-quaternary)' },
+                          onClick: (e) => {
+                            e.stopPropagation()
+                            haptic('tap')
+                            const href = String(r.url || '')
+                            if (/^https?:\/\//i.test(href)) {
+                              try {
+                                if (typeof host.open === 'function') host.open(href)
+                                else window.open(href, '_blank', 'noopener')
+                              } catch { /* ignore */ }
+                            }
+                          },
+                          children: r.title,
+                        })
+                      ),
+                    })
+                  : null,
+              ],
+            })
+          })
+        : jsx(Muted, { children: 'No open missions. Add one.' }),
+      jsxs('form', {
+        className: 'flex gap-1.5 mt-1',
+        onSubmit: (e) => {
+          e.preventDefault()
+          void add()
+        },
+        children: [
+          jsx(Input, {
+            value: draft,
+            onChange: (e) => setDraft(e.target.value),
+            placeholder: 'Add a mission…',
+            className: 'h-7 text-xs',
+            disabled: busy,
+          }),
+          jsx(Button, {
+            size: 'xs',
+            type: 'submit',
+            disabled: busy || !draft.trim(),
+            children: 'Add',
+          }),
+        ],
+      }),
+      jsxs('form', {
+        className: 'flex gap-1.5',
+        onSubmit: async (e) => {
+          e.preventDefault()
+          const text = noteLine.trim()
+          if (!text) return
+          haptic('tap')
+          setBusy(true)
+          try {
+            await patchLists(ctx, streamName, { op: 'add_note', text, base_revision: revision })
+            setNoteLine('')
+            await onMutated()
+          } catch (err) {
+            host.notify({ kind: 'error', message: errMsg(err) })
+          } finally {
+            setBusy(false)
+          }
+        },
+        children: [
+          jsx(Input, {
+            value: noteLine,
+            onChange: (e) => setNoteLine(e.target.value),
+            placeholder: 'Drop a note…',
+            className: 'h-7 text-xs',
+            disabled: busy,
+          }),
+          jsx(Button, {
+            size: 'xs',
+            type: 'submit',
+            disabled: busy || !noteLine.trim(),
+            children: 'Note',
+          }),
+        ],
+      }),
+    ],
+  })
+}
+
 
 /* ──── map.js ──── */
 /** @section page */
+
 
 
 
@@ -1191,7 +1764,8 @@ function WorkstreamPage({ ctx }) {
         s =>
           ['dirty', 'degraded', 'partial', 'stale'].includes(s.health) ||
           (s.down_url_count || 0) > 0 ||
-          (s.blocker_count || 0) > 0
+          (s.blocker_count || 0) > 0 ||
+          s.lists_ok === false
       )
     }
     if (q) {
@@ -1226,12 +1800,11 @@ function WorkstreamPage({ ctx }) {
       className: 'flex h-full min-h-0 w-full',
       children: [
         jsxs('div', {
-          className: 'w-64 shrink-0 border-r p-3 flex flex-col gap-2',
+          className: 'w-72 shrink-0 border-r p-3 flex flex-col gap-2',
           style: { borderColor: 'var(--ui-stroke-secondary, var(--border))' },
           children: [
             jsx(Skeleton, { className: 'h-4 w-1/2' }),
             jsx(Skeleton, { className: 'h-8 w-full' }),
-            jsx(Skeleton, { className: 'h-10 w-full' }),
             jsx(Skeleton, { className: 'h-10 w-full' }),
           ],
         }),
@@ -1239,7 +1812,6 @@ function WorkstreamPage({ ctx }) {
           className: 'flex-1 p-6 flex flex-col gap-3',
           children: [
             jsx(Skeleton, { className: 'h-8 w-1/3' }),
-            jsx(Skeleton, { className: 'h-32 w-full' }),
             jsx(Skeleton, { className: 'h-32 w-full' }),
           ],
         }),
@@ -1253,7 +1825,9 @@ function WorkstreamPage({ ctx }) {
       children: jsx(ErrorState, {
         title: /No such API|not mounted/i.test(errMsg(error))
           ? 'Backend not installed on this dashboard'
-          : 'Workstreams failed to load',
+          : /unauthenticated|Unauthorized|no_cookie/i.test(errMsg(error))
+            ? 'Dashboard auth required'
+            : 'Workstreams failed to load',
         description: errMsg(error),
         children: jsx(Button, {
           size: 'sm',
@@ -1321,7 +1895,7 @@ function StreamSidebar({
   emptyDesc,
 }) {
   return jsxs('aside', {
-    className: 'flex h-full min-h-0 w-64 shrink-0 flex-col border-r',
+    className: 'flex h-full min-h-0 w-72 shrink-0 flex-col border-r',
     style: { borderColor: 'var(--ui-stroke-secondary, var(--border))' },
     children: [
       jsxs('div', {
@@ -1347,22 +1921,9 @@ function StreamSidebar({
             className: 'flex gap-1 flex-wrap',
             children: [
               jsx(StatChip, { label: 'total', value: count }),
-              jsx(StatChip, {
-                label: 'adopted',
-                value: stats.adopted || 0,
-                tone: 'good',
-              }),
-              jsx(StatChip, {
-                label: 'bare',
-                value: stats.bare || 0,
-                tone: 'muted',
-              }),
+              jsx(StatChip, { label: 'adopted', value: stats.adopted || 0, tone: 'good' }),
               (stats.issues || 0) > 0
-                ? jsx(StatChip, {
-                    label: 'issues',
-                    value: stats.issues,
-                    tone: 'bad',
-                  })
+                ? jsx(StatChip, { label: 'issues', value: stats.issues, tone: 'bad' })
                 : null,
             ],
           }),
@@ -1387,11 +1948,7 @@ function StreamSidebar({
         className: 'min-h-0 flex-1 overflow-y-auto overflow-x-hidden',
         children:
           streams.length === 0
-            ? jsx(EmptyState, {
-                className: 'min-h-32',
-                title: emptyTitle,
-                description: emptyDesc,
-              })
+            ? jsx(EmptyState, { className: 'min-h-32', title: emptyTitle, description: emptyDesc })
             : streams.map(s => {
                 const isActive = s.name === activeStream
                 const isSel = s.name === selectedName
@@ -1404,9 +1961,7 @@ function StreamSidebar({
                     'hover:bg-accent/10',
                     isSel && 'bg-accent/10'
                   ),
-                  style: {
-                    borderColor: 'var(--ui-stroke-secondary, var(--border))',
-                  },
+                  style: { borderColor: 'var(--ui-stroke-secondary, var(--border))' },
                   onClick: () => {
                     haptic('tap')
                     setSelected(s.name)
@@ -1417,10 +1972,7 @@ function StreamSidebar({
                       children: [
                         jsx(StatusDot, { tone: isActive ? 'good' : hm.tone }),
                         jsx('span', {
-                          className: cn(
-                            'flex-1 truncate font-medium',
-                            isActive && 'underline decoration-dotted'
-                          ),
+                          className: cn('flex-1 truncate font-medium', isActive && 'underline decoration-dotted'),
                           children: s.title || s.name,
                         }),
                         jsx(Muted, { className: 'shrink-0', children: hm.short }),
@@ -1432,21 +1984,15 @@ function StreamSidebar({
                           style: { color: 'var(--ui-text-quaternary)' },
                           children: s.focus_label,
                         })
-                      : s.health === 'bare'
-                        ? jsx('div', {
-                            className: 'mt-0.5 pl-4 text-[10px]',
-                            style: { color: 'var(--ui-text-quaternary)' },
-                            children: 'not adopted',
-                          })
-                        : null,
-                    s.blocker_count || s.down_url_count
+                      : null,
+                    s.blocker_count || s.waiting_on_count
                       ? jsxs('div', {
                           className: 'mt-0.5 pl-4 flex gap-2 text-[10px]',
                           children: [
-                            s.down_url_count
+                            s.waiting_on_count
                               ? jsx('span', {
                                   style: { color: 'var(--destructive)' },
-                                  children: `${s.down_url_count} down`,
+                                  children: `${s.waiting_on_count} waiting`,
                                 })
                               : null,
                             s.blocker_count
@@ -1476,12 +2022,18 @@ function StreamDetail({
   ctx,
   onClear,
 }) {
+  const [tab, setTab] = usePersisted(ctx, STORAGE_KEYS.pageTab, 'missions')
+  const [busy, setBusy] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [noteDraft, setNoteDraft] = useState('')
+  const [openId, setOpenId] = useState('')
+
   if (!selectedName) {
     return jsx('div', {
       className: 'flex-1 min-w-0 min-h-0 flex items-center justify-center p-8',
       children: jsx(EmptyState, {
         title: 'Select a workstream',
-        description: 'Pick one on the left to see pulse, milestones, and constitution.',
+        description: 'Pick one on the left to see the picture.',
       }),
     })
   }
@@ -1495,10 +2047,7 @@ function StreamDetail({
         children: jsx(Button, {
           size: 'sm',
           variant: 'secondary',
-          onClick: () => {
-            haptic('tap')
-            refetchDetail()
-          },
+          onClick: () => { haptic('tap'); refetchDetail() },
           children: 'Retry',
         }),
       }),
@@ -1511,16 +2060,57 @@ function StreamDetail({
       children: [
         jsx(Skeleton, { className: 'h-8 w-48' }),
         jsx(Skeleton, { className: 'h-24 w-full' }),
-        jsx(Skeleton, { className: 'h-24 w-full' }),
       ],
     })
   }
 
-  const pulse = detail.pulse
+  const pulse = pulseOf(detail)
   const hm = healthMeta(detail.health)
   const title = detail.title || titleCase(selectedName)
-  const milestones = pulse?.milestones || []
-  const urls = pulse?.urls || []
+  const nxt = nextMission(detail)
+  const invalid = listsInvalid(detail)
+  const wait = waitingOn(pulse)
+  const stuck = stuckOn(pulse)
+  const resources = pulse?.resources || []
+  const notes = pulse?.notes || []
+  const timeline = (pulse?.timeline || []).slice().reverse()
+  const locks = pulse?.locks || []
+  const pipe = pulse?.pipeline || []
+  const today = todayISO(pulse?.timezone)
+
+  const mutate = async (op) => {
+    setBusy(true)
+    haptic('tap')
+    try {
+      await patchLists(ctx, selectedName, { ...op, base_revision: pulse?.revision })
+      await refetchDetail()
+    } catch (e) {
+      host.notify({ kind: 'error', message: errMsg(e) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const LABELS = {
+    missions: 'Missions',
+    blockers: 'Blockers',
+    resources: 'Resources',
+    health: 'Health',
+    ship: 'Ship',
+    pipeline: 'Pipeline',
+    milestones: 'Milestones',
+    'waiting-on': 'Waiting-on',
+    checks: 'Checks',
+    locks: 'Locks',
+    notes: 'Notes',
+    timeline: 'Timeline',
+  }
+  const earned = Array.isArray(detail.widgets) && detail.widgets.length
+    ? detail.widgets
+    : ['missions', 'blockers', 'resources', 'notes', 'timeline']
+  const tabs = earned.map(id => ({ id, label: LABELS[id] || id }))
+
+  const activeTab = tabs.some(t => t.id === tab) ? tab : 'missions'
 
   return jsxs('div', {
     className: 'flex-1 min-w-0 min-h-0 flex flex-col',
@@ -1539,30 +2129,23 @@ function StreamDetail({
                     className: 'flex items-center gap-2.5 min-w-0',
                     children: [
                       jsx(StatusDot, { tone: hm.tone }),
-                      jsx('h1', {
-                        className: 'text-base font-semibold truncate',
-                        children: title,
-                      }),
+                      jsx('h1', { className: 'text-base font-semibold truncate', children: title }),
                       jsx(HealthBadge, { health: detail.health }),
+                      pulse?.mode
+                        ? jsx(Badge, { variant: 'muted', size: 'xs', children: pulse.mode })
+                        : null,
                       detail.profile
-                        ? jsx(Badge, {
-                            variant: 'muted',
-                            size: 'xs',
-                            children: `@${detail.profile}`,
-                          })
+                        ? jsx(Badge, { variant: 'muted', size: 'xs', children: `@${detail.profile}` })
                         : null,
                     ],
                   }),
-                  pulse?.next_action
+                  nxt
                     ? jsxs('div', {
                         className: 'text-xs leading-snug',
                         style: { color: 'var(--ui-text-secondary, var(--muted-foreground))' },
                         children: [
-                          jsx('span', {
-                            style: { color: 'var(--ui-text-quaternary)' },
-                            children: 'Next · ',
-                          }),
-                          pulse.next_action,
+                          jsx('span', { style: { color: 'var(--ui-text-quaternary)' }, children: 'Next · ' }),
+                          nxt.title,
                         ],
                       })
                     : detail.focus_label
@@ -1571,16 +2154,14 @@ function StreamDetail({
                   jsxs('div', {
                     className: 'flex items-center gap-3 flex-wrap',
                     children: [
-                      pulse?.updated
-                        ? jsx(Muted, {
-                            children: `STATUS-LIVE · ${pulse.updated}${pulse.stale ? ' · STALE' : ''}`,
-                          })
-                        : jsx(Muted, { children: 'No STATUS-LIVE.md' }),
+                      detail.repo
+                        ? jsx(Muted, { children: detail.repo.replace(/^https:\/\/github.com\//, '') })
+                        : null,
+                      pulse?.updated_at
+                        ? jsx(Muted, { children: `lists · r${pulse.revision}` })
+                        : jsx(Muted, { children: 'No pulse.json' }),
                       detail.check?.checked_at
                         ? jsx(Muted, { children: `Checked ${ago(detail.check.checked_at)}` })
-                        : null,
-                      detail.overall_pct != null
-                        ? jsx(Muted, { children: `${detail.overall_pct}% overall` })
                         : null,
                     ],
                   }),
@@ -1596,207 +2177,541 @@ function StreamDetail({
                     onClick: async () => {
                       haptic('tap')
                       try {
-                        await ctx.rest(
-                          `/stream?stream=${encodeURIComponent(selectedName)}&check=true&force=true`
-                        )
-                      } catch {
-                        /* ignore */
-                      }
+                        await ctx.rest(`/stream?stream=${encodeURIComponent(selectedName)}&check=true&force=true`)
+                      } catch { /* */ }
                       await refetchDetail()
                     },
                     children: detailFetching ? '…' : 'Recheck',
                   }),
-                  jsx(Button, {
-                    size: 'sm',
-                    variant: 'ghost',
-                    onClick: onClear,
-                    children: 'Clear',
-                  }),
+                  jsx(Button, { size: 'sm', variant: 'ghost', onClick: onClear, children: 'Clear' }),
                 ],
               }),
             ],
           }),
-          pulse?.overall_pct != null || detail.core
-            ? jsx(ProgressBar, {
-                pct: pulse?.overall_pct ?? detail.core?.pct ?? 0,
-                tone:
-                  detail.health === 'degraded' || detail.health === 'dirty'
-                    ? 'bad'
-                    : (pulse?.overall_pct ?? detail.core?.pct) === 100
-                      ? 'good'
-                      : 'warn',
+          invalid
+            ? jsx('div', {
+                className: 'text-xs',
+                style: { color: 'var(--destructive)' },
+                children: `pulse.json invalid — ${detail.lists?.error || 'not overwritten'}`,
               })
             : null,
+          jsx('div', {
+            className: 'flex gap-1 flex-wrap',
+            children: tabs.map(t =>
+              jsx(Button, {
+                key: t.id,
+                size: 'xs',
+                variant: activeTab === t.id ? 'secondary' : 'ghost',
+                onClick: () => { haptic('tap'); setTab(t.id) },
+                children: t.label,
+              })
+            ),
+          }),
         ],
       }),
 
       jsx('div', {
         className: 'min-h-0 flex-1 overflow-y-auto p-6',
-        children: jsxs('div', {
-          className: 'grid grid-cols-1 xl:grid-cols-2 gap-3 items-start',
-          children: [
-            jsx(DetailCard, {
-              title: 'Milestones',
-              children: milestones.length
-                ? jsxs('div', {
-                    className: 'flex flex-col gap-2',
-                    children: [
-                      jsx(MilestoneRail, { chips: pulse.milestone_chips }),
-                      jsx('div', {
-                        className: 'flex flex-col',
-                        children: milestones.map((m, i) =>
-                          jsxs('div', {
-                            key: m.id || i,
-                            className: cn(
-                              'flex items-center gap-2 py-1.5 text-xs',
-                              i > 0 && 'border-t'
-                            ),
-                            style: i > 0
-                              ? { borderColor: 'var(--ui-stroke-secondary, var(--border))' }
-                              : undefined,
-                            children: [
-                              jsx(StatusDot, {
-                                tone: healthMeta(
-                                  m.tone === 'good' ? 'clean'
-                                    : m.tone === 'bad' ? 'dirty'
-                                      : m.tone === 'active' ? 'active'
-                                        : 'bare'
-                                ).tone,
-                              }),
-                              jsx('span', {
-                                className: 'font-medium shrink-0 tabular-nums',
-                                children: m.short_id || m.id,
-                              }),
-                              jsx('span', {
-                                className: 'truncate flex-1',
-                                style: { color: 'var(--ui-text-secondary, var(--muted-foreground))' },
-                                children: m.label || m.status,
-                              }),
-                              m.pct != null
-                                ? jsx(Muted, { className: 'shrink-0', children: `${m.pct}%` })
-                                : null,
-                              m.paid
-                                ? jsx(Badge, { variant: 'muted', size: 'xs', children: m.paid })
-                                : null,
-                            ],
-                          })
-                        ),
-                      }),
-                    ],
-                  })
-                : jsx(Muted, { children: 'No milestone table in STATUS-LIVE' }),
-            }),
-
-            jsx(DetailCard, {
-              title: 'Live URLs',
-              children: urls.length
-                ? jsxs('div', {
-                    className: 'flex flex-col',
-                    children: [
-                      jsx(UrlPills, { urls }),
-                      jsx('div', {
-                        className: 'mt-2 flex flex-col',
-                        children: urls.map((u, i) =>
-                          jsxs('div', {
-                            key: u.name,
-                            className: cn(
-                              'flex items-center justify-between gap-2 py-1.5 text-xs',
-                              i > 0 && 'border-t'
-                            ),
-                            style: i > 0
-                              ? { borderColor: 'var(--ui-stroke-secondary, var(--border))' }
-                              : undefined,
-                            children: [
-                              jsxs('div', {
-                                className: 'flex items-center gap-2 min-w-0',
+        children:
+          activeTab === 'missions'
+            ? jsx(MissionsPicture, {
+                pulse, today, busy, draft, setDraft, openId, setOpenId, mutate, invalid,
+              })
+            : activeTab === 'blockers' || activeTab === 'waiting-on'
+              ? jsx(BlockersPicture, { wait, stuck, mutate, busy })
+              : activeTab === 'resources'
+                ? jsx(ResourcesPicture, { resources })
+                : activeTab === 'health'
+                  ? jsx(HealthPicture, { resources })
+                  : activeTab === 'ship'
+                    ? jsx(ShipPicture, { resources, repo: detail.repo })
+                    : activeTab === 'milestones'
+                      ? jsx(MilestonesPicture, { milestones: detail.pulse?.milestones || [] })
+                      : activeTab === 'pipeline'
+                        ? jsx(PipelinePicture, { pipe, pulse })
+                        : activeTab === 'locks'
+                          ? jsx(LocksPicture, { locks })
+                          : activeTab === 'checks'
+                            ? jsxs('div', {
+                                className: 'grid grid-cols-1 xl:grid-cols-2 gap-3',
                                 children: [
-                                  jsx(StatusDot, {
-                                    tone: u.tone === 'bad' ? 'bad' : u.tone === 'good' ? 'good' : 'muted',
-                                  }),
-                                  jsx('span', { className: 'font-medium truncate', children: u.name }),
+                                  jsx(DetailCard, { title: 'Constitution', children: jsx(CoreChecklist, { core: detail.core }) }),
+                                  jsx(DetailCard, { title: 'Checks', children: jsx(ViolationList, { check: detail.check }) }),
                                 ],
+                              })
+                            : jsx(NotesPicture, {
+                                notes, timeline, noteDraft, setNoteDraft, mutate, busy,
                               }),
-                              jsx(Muted, { children: u.status }),
-                            ],
-                          })
-                        ),
-                      }),
-                    ],
+      }),
+    ],
+  })
+}
+
+function MissionsPicture({ pulse, today, busy, draft, setDraft, openId, setOpenId, mutate, invalid }) {
+  if (invalid) return jsx(Muted, { children: 'Jobs disabled — pulse.json is invalid.' })
+  const items = sortedMissions(pulse)
+  const open = openMissions(pulse)
+  return jsxs('div', {
+    className: 'flex flex-col gap-3 max-w-3xl',
+    children: [
+      jsxs('form', {
+        className: 'flex gap-2',
+        onSubmit: (e) => {
+          e.preventDefault()
+          const title = draft.trim()
+          if (!title) return
+          void mutate({ op: 'upsert', collection: 'missions', record: { title, status: 'todo' } })
+          setDraft('')
+        },
+        children: [
+          jsx(Input, {
+            value: draft,
+            onChange: (e) => setDraft(e.target.value),
+            placeholder: 'Add a mission…',
+            className: 'h-8 text-xs',
+            disabled: busy,
+          }),
+          jsx(Button, { size: 'sm', type: 'submit', disabled: busy || !draft.trim(), children: 'Add' }),
+        ],
+      }),
+      open.length
+        ? open.map(m => jsx(MissionRow, {
+            key: m.id,
+            m,
+            pulse,
+            today,
+            open: openId === m.id,
+            onToggle: () => setOpenId(openId === m.id ? '' : m.id),
+            mutate,
+            busy,
+          }))
+        : jsx(Muted, { children: 'No open missions.' }),
+      items.some(m => m.status === 'done' || m.status === 'cancelled')
+        ? jsxs('div', {
+            className: 'flex flex-col gap-1 pt-2',
+            children: [
+              jsx(SectionLabel, { children: 'Closed' }),
+              items.filter(m => m.status === 'done' || m.status === 'cancelled').map(m =>
+                jsxs('div', {
+                  key: m.id,
+                  className: 'flex items-center gap-2 text-xs py-1',
+                  children: [
+                    jsx(StatusDot, { tone: statusTone(m.status) }),
+                    jsx('span', { className: 'flex-1 truncate', style: { color: 'var(--ui-text-quaternary)' }, children: m.title }),
+                    jsx(Button, {
+                      size: 'xs',
+                      variant: 'ghost',
+                      disabled: busy,
+                      onClick: () => mutate({ op: 'upsert', collection: 'missions', id: m.id, record: { status: 'todo' } }),
+                      children: 'reopen',
+                    }),
+                  ],
+                })
+              ),
+            ],
+          })
+        : null,
+    ],
+  })
+}
+
+function MissionRow({ m, pulse, today, open, onToggle, mutate, busy }) {
+  const blk = m.status === 'blocked' ? blockerById(pulse, m.blocker_id) : null
+  const rel = (m.related || []).map(id => resourceById(pulse, id)).filter(Boolean)
+  const [why, setWhy] = useState(m.note || '')
+  useEffect(() => { setWhy(m.note || '') }, [m.note, m.id])
+
+  return jsxs('div', {
+    className: 'rounded-md border px-3 py-2 flex flex-col gap-1.5',
+    style: { borderColor: 'var(--ui-stroke-secondary, var(--border))' },
+    children: [
+      jsxs('div', {
+        className: 'flex items-center gap-2 text-xs min-w-0',
+        children: [
+          jsx(StatusDot, { tone: statusTone(m.status) }),
+          jsx('button', {
+            type: 'button',
+            className: 'flex-1 text-left font-medium truncate hover:opacity-80',
+            onClick: onToggle,
+            children: m.title,
+          }),
+          m.due
+            ? jsx(Muted, { children: String(m.due) < today ? `overdue ${m.due}` : m.due })
+            : null,
+          jsx(Badge, { variant: 'muted', size: 'xs', children: m.status }),
+        ],
+      }),
+      blk
+        ? jsx('div', {
+            className: 'text-[10px]',
+            style: { color: 'var(--destructive)' },
+            children: `stuck-on · ${blk.title}`,
+          })
+        : null,
+      open
+        ? jsxs('div', {
+            className: 'flex flex-col gap-2 pt-1',
+            children: [
+              m.goals?.length
+                ? jsx('div', {
+                    className: 'flex flex-col gap-0.5',
+                    children: m.goals.map((g, i) =>
+                      jsx('div', {
+                        key: i,
+                        className: 'text-[11px]',
+                        style: { color: 'var(--ui-text-secondary)' },
+                        children: `· ${g}`,
+                      })
+                    ),
                   })
-                : jsx(Muted, { children: 'No live URL table' }),
-            }),
-
-            jsx(DetailCard, {
-              title: 'Blockers',
-              children: jsx(BlockerList, { blockers: pulse?.blockers }),
-            }),
-
-            jsx(DetailCard, {
-              title: 'Open PRs',
-              children: pulse?.prs?.length
-                ? jsx(PrList, { prs: pulse.prs, limit: 12, repo: detail.repo })
-                : jsx(Muted, { children: 'None listed' }),
-            }),
-
-            jsx(DetailCard, {
-              title: 'Constitution',
-              children: jsxs('div', {
-                className: 'flex flex-col gap-2',
+                : null,
+              rel.length
+                ? jsx('div', {
+                    className: 'flex gap-1.5 flex-wrap',
+                    children: rel.map(r =>
+                      jsx(Button, {
+                        key: r.id,
+                        size: 'xs',
+                        variant: 'ghost',
+                        onClick: () => {
+                          const href = String(r.url || '')
+                          if (/^https?:\/\//i.test(href)) {
+                            try {
+                              if (typeof host.open === 'function') host.open(href)
+                              else window.open(href, '_blank', 'noopener')
+                            } catch { /* */ }
+                          }
+                        },
+                        children: r.title,
+                      })
+                    ),
+                  })
+                : null,
+              jsxs('div', {
+                className: 'flex gap-1.5',
                 children: [
-                  jsx(CoreChecklist, { core: detail.core }),
-                  jsx(ViolationList, { check: detail.check }),
-                ],
-              }),
-            }),
-
-            jsx(DetailCard, {
-              title: 'Pulse',
-              children: jsxs('div', {
-                className: 'flex flex-col gap-1.5 text-xs',
-                style: { color: 'var(--ui-text-secondary, var(--muted-foreground))' },
-                children: [
-                  jsxs('div', {
-                    className: 'flex justify-between gap-2',
-                    children: [
-                      jsx(Muted, { children: 'Milestones done' }),
-                      jsx('span', {
-                        children: `${pulse?.done_count ?? 0} / ${pulse?.milestone_count ?? 0}`,
-                      }),
-                    ],
+                  jsx(Input, {
+                    value: why,
+                    onChange: (e) => setWhy(e.target.value),
+                    placeholder: 'Why / note…',
+                    className: 'h-7 text-xs',
                   }),
-                  jsxs('div', {
-                    className: 'flex justify-between gap-2',
-                    children: [
-                      jsx(Muted, { children: 'Down URLs' }),
-                      jsx('span', {
-                        style: (pulse?.down_urls || []).length
-                          ? { color: 'var(--destructive)' }
-                          : undefined,
-                        children: (pulse?.down_urls || []).length,
-                      }),
-                    ],
-                  }),
-                  jsxs('div', {
-                    className: 'flex justify-between gap-2',
-                    children: [
-                      jsx(Muted, { children: 'Open PRs' }),
-                      jsx('span', { children: (pulse?.prs || []).length }),
-                    ],
-                  }),
-                  jsxs('div', {
-                    className: 'flex justify-between gap-2',
-                    children: [
-                      jsx(Muted, { children: 'Blockers' }),
-                      jsx('span', { children: (pulse?.blockers || []).length }),
-                    ],
+                  jsx(Button, {
+                    size: 'xs',
+                    variant: 'secondary',
+                    disabled: busy,
+                    onClick: () => mutate({
+                      op: 'upsert',
+                      collection: 'missions',
+                      id: m.id,
+                      record: { note: why },
+                    }),
+                    children: 'Save',
                   }),
                 ],
               }),
+              jsxs('div', {
+                className: 'flex gap-1 flex-wrap',
+                children: ['todo', 'doing', 'later', 'done', 'cancelled'].map(st =>
+                  jsx(Button, {
+                    key: st,
+                    size: 'xs',
+                    variant: m.status === st ? 'secondary' : 'ghost',
+                    disabled: busy,
+                    onClick: () => mutate({
+                      op: 'upsert',
+                      collection: 'missions',
+                      id: m.id,
+                      record: { status: st },
+                    }),
+                    children: st,
+                  })
+                ),
+              }),
+            ],
+          })
+        : null,
+    ],
+  })
+}
+
+function BlockersPicture({ wait, stuck, mutate, busy }) {
+  const groups = [
+    { id: 'waiting-on', label: 'Waiting-on', items: wait },
+    { id: 'stuck-on', label: 'Stuck-on', items: stuck },
+  ]
+  return jsx('div', {
+    className: 'grid grid-cols-1 xl:grid-cols-2 gap-3 items-start',
+    children: groups.map(g =>
+      jsx(DetailCard, {
+        key: g.id,
+        title: g.label,
+        children: g.items.length
+          ? g.items.map(b =>
+              jsxs('div', {
+                key: b.id,
+                className: 'flex flex-col gap-1 py-1.5 border-b last:border-0 text-xs',
+                style: { borderColor: 'var(--ui-stroke-secondary, var(--border))' },
+                children: [
+                  jsxs('div', {
+                    className: 'flex items-center gap-2',
+                    children: [
+                      jsx(StatusDot, { tone: g.id === 'waiting-on' ? 'warn' : 'bad' }),
+                      jsx('span', { className: 'flex-1 font-medium', children: b.title }),
+                      jsx(Button, {
+                        size: 'xs',
+                        variant: 'ghost',
+                        disabled: busy,
+                        onClick: () => mutate({
+                          op: 'upsert',
+                          collection: 'blockers',
+                          id: b.id,
+                          record: { status: 'resolved' },
+                        }),
+                        children: 'resolve',
+                      }),
+                    ],
+                  }),
+                  b.waiting_on ? jsx(Muted, { children: b.waiting_on }) : null,
+                  b.note ? jsx('div', { style: { color: 'var(--ui-text-secondary)' }, children: b.note }) : null,
+                ],
+              })
+            )
+          : jsx(Muted, { children: `No ${g.label.toLowerCase()}.` }),
+      })
+    ),
+  })
+}
+
+function ResourcesPicture({ resources }) {
+  if (!resources.length) {
+    return jsx(Muted, { children: 'No resources on this stream.' })
+  }
+  return jsx('div', {
+    className: 'flex flex-col gap-1 max-w-2xl',
+    children: resources.map(r =>
+      jsxs('div', {
+        key: r.id,
+        className: 'flex items-center gap-2 py-1.5 text-xs border-b',
+        style: { borderColor: 'var(--ui-stroke-secondary, var(--border))' },
+        children: [
+          jsx(StatusDot, {
+            tone: r.status === 'down' ? 'bad' : r.status === 'up' || r.status === 'merged' ? 'good' : 'muted',
+          }),
+          jsx('span', { className: 'font-medium truncate flex-1', children: r.title }),
+          jsx(Muted, { children: r.kind }),
+          /^https?:\/\//i.test(r.url || '')
+            ? jsx(Button, {
+                size: 'xs',
+                variant: 'ghost',
+                onClick: () => {
+                  haptic('tap')
+                  try {
+                    if (typeof host.open === 'function') host.open(r.url)
+                    else window.open(r.url, '_blank', 'noopener')
+                  } catch { /* */ }
+                },
+                children: 'Open',
+              })
+            : jsx(Muted, { children: r.url || '' }),
+        ],
+      })
+    ),
+  })
+}
+
+function PipelinePicture({ pipe, pulse }) {
+  const missions = sortedMissions(pulse)
+  return jsxs('div', {
+    className: 'flex flex-col gap-3',
+    children: [
+      jsx('div', {
+        className: 'flex gap-1.5 flex-wrap',
+        children: pipe.map((stage, i) =>
+          jsxs('div', {
+            key: stage,
+            className: 'px-2 py-1 rounded-[4px] text-[11px]',
+            style: { background: 'var(--ui-stroke-secondary, var(--muted))' },
+            children: [
+              jsx('span', { style: { color: 'var(--ui-text-quaternary)' }, children: `${i + 1} ` }),
+              stage,
+            ],
+          })
+        ),
+      }),
+      jsx(Muted, { children: `${missions.filter(m => m.status === 'doing').length} doing · ${missions.filter(m => m.status === 'done').length} done` }),
+    ],
+  })
+}
+
+function LocksPicture({ locks }) {
+  return jsx('div', {
+    className: 'flex flex-col gap-2 max-w-2xl',
+    children: locks.map(k =>
+      jsxs('div', {
+        key: k.id,
+        className: 'text-xs flex flex-col gap-0.5 py-1.5 border-b',
+        style: { borderColor: 'var(--ui-stroke-secondary, var(--border))' },
+        children: [
+          jsx('span', { className: 'font-medium', children: k.title }),
+          k.decided ? jsx(Muted, { children: `decided ${k.decided}` }) : null,
+        ],
+      })
+    ),
+  })
+}
+
+function NotesPicture({ notes, timeline, noteDraft, setNoteDraft, mutate, busy }) {
+  return jsxs('div', {
+    className: 'grid grid-cols-1 xl:grid-cols-2 gap-3 items-start',
+    children: [
+      jsx(DetailCard, {
+        title: 'Notes',
+        children: jsxs('div', {
+          className: 'flex flex-col gap-2',
+          children: [
+            jsxs('form', {
+              className: 'flex gap-1.5',
+              onSubmit: (e) => {
+                e.preventDefault()
+                const text = noteDraft.trim()
+                if (!text) return
+                void mutate({ op: 'add_note', text })
+                setNoteDraft('')
+              },
+              children: [
+                jsx(Input, {
+                  value: noteDraft,
+                  onChange: (e) => setNoteDraft(e.target.value),
+                  placeholder: 'Add a note…',
+                  className: 'h-7 text-xs',
+                }),
+                jsx(Button, { size: 'xs', type: 'submit', disabled: busy || !noteDraft.trim(), children: 'Add' }),
+              ],
             }),
+            notes.slice().reverse().map(n =>
+              jsxs('div', {
+                key: n.id,
+                className: 'text-xs flex flex-col gap-0.5',
+                children: [
+                  jsx(Muted, { children: String(n.at || '').slice(0, 16) }),
+                  jsx('span', { style: { color: 'var(--ui-text-secondary)' }, children: n.text }),
+                ],
+              })
+            ),
           ],
         }),
       }),
+      jsx(DetailCard, {
+        title: 'Timeline',
+        children: timeline.length
+          ? timeline.slice(0, 24).map(e =>
+              jsxs('div', {
+                key: e.id,
+                className: 'flex items-center gap-2 text-[11px] py-0.5',
+                children: [
+                  jsx(Muted, { className: 'shrink-0', children: String(e.at || '').slice(5, 16) }),
+                  jsx('span', { children: e.kind }),
+                  e.detail ? jsx(Muted, { children: e.detail }) : null,
+                ],
+              })
+            )
+          : jsx(Muted, { children: 'No events yet.' }),
+      }),
     ],
+  })
+}
+
+
+function HealthPicture({ resources }) {
+  const urls = (resources || []).filter(r => r.kind === 'url')
+  if (!urls.length) return jsx(Muted, { children: 'No URL resources.' })
+  return jsx('div', {
+    className: 'flex flex-col gap-1 max-w-2xl',
+    children: urls.map(r =>
+      jsxs('div', {
+        key: r.id,
+        className: 'flex items-center gap-2 py-1.5 text-xs border-b',
+        style: { borderColor: 'var(--ui-stroke-secondary, var(--border))' },
+        children: [
+          jsx(StatusDot, { tone: r.status === 'down' ? 'bad' : r.status === 'up' ? 'good' : 'muted' }),
+          jsx('span', { className: 'flex-1 font-medium truncate', children: r.title }),
+          jsx(Muted, { children: r.status || 'unknown' }),
+          /^https?:\/\//i.test(r.url || '')
+            ? jsx(Button, {
+                size: 'xs',
+                variant: 'ghost',
+                onClick: () => {
+                  haptic('tap')
+                  try {
+                    if (typeof host.open === 'function') host.open(r.url)
+                    else window.open(r.url, '_blank', 'noopener')
+                  } catch { /* */ }
+                },
+                children: 'Open',
+              })
+            : null,
+        ],
+      })
+    ),
+  })
+}
+
+function ShipPicture({ resources, repo }) {
+  const prs = (resources || []).filter(r => r.kind === 'pr')
+  return jsxs('div', {
+    className: 'flex flex-col gap-2 max-w-2xl',
+    children: [
+      repo ? jsx(Muted, { children: String(repo).replace(/^https:\/\/github.com\//, '') }) : null,
+      prs.length
+        ? prs.map(r =>
+            jsxs('div', {
+              key: r.id,
+              className: 'flex items-center gap-2 py-1.5 text-xs border-b',
+              style: { borderColor: 'var(--ui-stroke-secondary, var(--border))' },
+              children: [
+                jsx(StatusDot, { tone: r.status === 'merged' ? 'good' : r.status === 'closed' ? 'muted' : 'warn' }),
+                jsx('span', { className: 'flex-1 font-medium truncate', children: r.title }),
+                jsx(Muted, { children: r.status || 'open' }),
+                /^https?:\/\//i.test(r.url || '')
+                  ? jsx(Button, {
+                      size: 'xs',
+                      variant: 'ghost',
+                      onClick: () => {
+                        haptic('tap')
+                        try {
+                          if (typeof host.open === 'function') host.open(r.url)
+                          else window.open(r.url, '_blank', 'noopener')
+                        } catch { /* */ }
+                      },
+                      children: 'Open',
+                    })
+                  : null,
+              ],
+            })
+          )
+        : jsx(Muted, { children: 'No PR resources — repo is the door.' }),
+    ],
+  })
+}
+
+function MilestonesPicture({ milestones }) {
+  if (!milestones?.length) return jsx(Muted, { children: 'No milestone table.' })
+  return jsx('div', {
+    className: 'flex flex-col max-w-2xl',
+    children: milestones.map((m, i) =>
+      jsxs('div', {
+        key: m.id || i,
+        className: 'flex items-center gap-2 py-1.5 text-xs border-b',
+        style: { borderColor: 'var(--ui-stroke-secondary, var(--border))' },
+        children: [
+          jsx(StatusDot, { tone: m.tone === 'good' ? 'good' : m.tone === 'bad' ? 'bad' : 'muted' }),
+          jsx('span', { className: 'font-medium shrink-0', children: m.short_id || m.id }),
+          jsx('span', { className: 'truncate flex-1', children: m.label || m.status || '' }),
+          m.pct != null ? jsx(Muted, { children: `${m.pct}%` }) : null,
+        ],
+      })
+    ),
   })
 }
 
@@ -1844,6 +2759,18 @@ async function runPulseNotify(ctx) {
   }
   try {
     const r = await ctx.rest(`/pulse?stream=${encodeURIComponent(name)}`)
+    const lists = r.lists
+    if (lists?.ok && lists.view?.next_mission) {
+      const n = lists.view.next_mission
+      const wait = lists.view.waiting_on_count || 0
+      host.notify({
+        kind: wait ? 'error' : 'info',
+        message: wait
+          ? `${name}: ${n.title} · ${wait} waiting-on`
+          : `${name}: ${n.status} · ${n.title}`,
+      })
+      return
+    }
     const p = r.pulse
     if (!p) {
       host.notify({ kind: 'info', message: `${name}: no STATUS-LIVE.md` })
@@ -1864,7 +2791,7 @@ const plugin = {
   id: ID,
   name: 'Workstreamer',
   description:
-    'Workstream constitution + live STATUS pulse — status chip and fleet page.',
+    'Workstream pulse — chip jobs + fleet page. Lists live in scope/pulse.json.',
   defaultEnabled: true,
 
   register(ctx) {
@@ -1891,7 +2818,6 @@ const plugin = {
       },
     })
 
-    // Full page only — no always-on right rail. Open via sidebar / chip / palette.
     ctx.register({
       id: 'workstream-map-page',
       area: ROUTES_AREA,
@@ -1922,7 +2848,7 @@ const plugin = {
         id: 'workstreamer.pulse',
         action: 'workstreamer.pulse',
         label: 'Workstreamer: Pulse current stream',
-        keywords: ['workstream', 'workstreamer', 'stream', 'pulse', 'status', 'milestones', 'ws'],
+        keywords: ['workstream', 'workstreamer', 'stream', 'pulse', 'status', 'missions', 'ws'],
         codicon: 'pulse',
         run: () => runPulseNotify(ctx),
       },

@@ -172,4 +172,4 @@ Tokens and `.git` suffixes are stripped. `#29` in STATUS-LIVE becomes `{repo}/pu
 
 ## Version
 
-**0.3.0** — chip switcher + pin + milestone ticks; clickable URLs/PRs; repo discovered from git/AGENTS (no `STREAM_REPOS` table).
+**0.4.0** — pulse.json writer (chip + `/stream` + hidden pass). Chip = jobs, page = picture. Widgets auto-hide. `/stream` `/workstream` (`/ws` exact only).
